@@ -38,12 +38,13 @@ const ALLOWED_EDGE_VOICES = new Set([
 ]);
 
 function getVoice(lang?: string, requestedVoice?: string): string {
-  if (requestedVoice && ALLOWED_EDGE_VOICES.has(requestedVoice)) {
-    if (!lang) return requestedVoice;
+  const normalizedVoice = requestedVoice?.replace(/^edge-tts:/i, "");
+  if (normalizedVoice && ALLOWED_EDGE_VOICES.has(normalizedVoice)) {
+    if (!lang) return normalizedVoice;
     const langPrefix = lang.split("-")[0].toLowerCase();
-    const voicePrefix = requestedVoice.split("-")[0].toLowerCase();
+    const voicePrefix = normalizedVoice.split("-")[0].toLowerCase();
     if (langPrefix === voicePrefix) {
-      return requestedVoice;
+      return normalizedVoice;
     }
   }
   if (!lang) return VOICE_MAP["en-US"];

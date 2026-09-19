@@ -147,8 +147,6 @@ export default function DiffCanvasHUD() {
         body: JSON.stringify({
           tool: "get_pr_diff",
           args: {
-            owner: "Nawxtz",
-            repo: "codecast-demo",
             pull_number: pullNumber,
           },
         }),
