@@ -1,4 +1,4 @@
-# CodeCast 🎙️⚡
+# CodeCast
 
 > **Voice-Native GitHub Pull Request Review Copilot**  
 > Review, discuss, and comment on pull requests hands-free with low-latency voice, studio-grade neural speech, interactive diff canvas, and safe GitHub tool execution.
@@ -11,151 +11,145 @@
 
 ---
 
-## 💡 Overview
+## Overview
 
-Reviewing large pull requests by clicking through endless files and typing inline suggestions is slow and tiring. **CodeCast** transforms pull request reviews into a natural conversation:
+Reviewing large pull requests by clicking through endless files and typing inline suggestions is slow and tiring. CodeCast transforms pull request reviews into a natural conversation:
 
-1. **Speak Naturally**: Hold `Space` (Push-to-Talk) or use continuous voice to explore diffs, question logic, and check edge cases.
-2. **Instant Neural Speech**: The assistant speaks in studio-quality neural voices ($0 cost via Edge-TTS) with zero robotic speech artifacts.
-3. **Instant Barge-In**: Interrupt the assistant at any millisecond by speaking or tapping `Space`—audio playback halts instantly without buffering lag.
-4. **Real GitHub Tool Execution**: Inspect diffs, validate files, post inline code review comments, and submit official reviews directly to GitHub.
-5. **Enterprise Safety & Dry-Run**: Hardened executor with repository whitelisting, action caps, duplicate guards, and secret isolation.
-6. **Multi-Language Native**: Full auto-detection and fluent review in **English**, **Thai 🇹🇭**, **Japanese 🇯🇵**, and **Spanish 🇪🇸**.
+- **Speak Naturally**: Hold `Space` (Push-to-Talk) or use continuous voice to explore diffs, question logic, and check edge cases.
+- **Instant Neural Speech**: The assistant speaks in studio-quality neural voices ($0 cost via Edge-TTS) with zero robotic speech artifacts.
+- **Instant Barge-In**: Interrupt the assistant at any millisecond by speaking or tapping `Space`. Audio playback halts instantly without buffering lag.
+- **Real GitHub Tool Execution**: Inspect diffs, validate files, post inline code review comments, and submit official reviews directly to GitHub.
+- **Enterprise Safety & Dry-Run**: Hardened executor with repository whitelisting, action caps, duplicate guards, and secret isolation.
+- **Multi-Language Native**: Full auto-detection and fluent review in English, Thai, Japanese, and Spanish.
 
 ---
 
-## 🏛️ System Architecture
+## System Architecture
+
+CodeCast uses a clean separation of concerns between the browser-based client, the Next.js backend, and external cloud services.
 
 ```mermaid
 graph TD
-    subgraph Browser ["Client: Browser (Chrome / Edge)"]
-        HUD["DiffCanvasHUD<br/>(Diff Viewer, File Tree, Audit Log)"]
-        Orb["VoiceOrb & Controls<br/>(PTT Spacebar, Mic State)"]
-        STT["Web Speech API<br/>(SpeechRecognition + Tail Buffer)"]
-        Audio["HTML5 Audio Player<br/>(Instant Barge-in Interrupt)"]
-        Zustand["Zustand Store<br/>(PR State, Comments, History)"]
+    subgraph Client [Client Browser]
+        UI[HUD & Diff Viewer]
+        Voice[Voice Orb & Mic]
+        Audio[Audio Player]
     end
 
-    subgraph Backend ["Next.js App Router Backend"]
-        ChatRoute["/api/chat<br/>(Prompt Engine, Language Router)"]
-        ToolRoute["/api/tools/execute<br/>(Tool Router & Sanitizer)"]
-        TTSRoute["/api/tts<br/>(Edge-TTS Streaming Engine)"]
-        DigestRoute["/api/digest<br/>(Post-Review Markdown Generator)"]
-        SafeExec["safeGithubExecutor.ts<br/>(Whitelist, Action Cap, Dry-Run)"]
+    subgraph Backend [Next.js Backend]
+        Chat[Chat API]
+        Tools[Tool Executor]
+        TTS[TTS Engine]
+        Safe[Safe Executor]
     end
 
-    subgraph Cloud ["External Cloud Services"]
-        LLM["OpenRouter / Hermes Union Alpha<br/>(Free Tier Neural Models)"]
-        EdgeTTS["Microsoft Azure Cognitive Speech<br/>(Edge-TTS Free Neural Voices)"]
-        GitHubAPI["GitHub REST API<br/>(Octokit Client)"]
+    subgraph External [External Services]
+        LLM[OpenRouter LLM]
+        Edge[Edge-TTS]
+        GH[GitHub API]
     end
 
     %% Client Interactions
-    Orb -->|Push-to-Talk| STT
-    STT -->|Transcribed Text| ChatRoute
-    HUD -->|Tab & Filter State| Zustand
-    Audio -->|Interrupt / Barge-in| Orb
+    Voice -->|Speech| Chat
+    Audio -->|Interrupt| Voice
+    UI -->|State| Chat
 
     %% Backend Interactions
-    ChatRoute -->|System Prompt & Tools| LLM
-    LLM -->|Tool Call Request| ChatRoute
-    ChatRoute -->|Execute Tool| ToolRoute
-    ToolRoute -->|Verify Policy| SafeExec
-    SafeExec -->|Authenticated Calls| GitHubAPI
-    ToolRoute -->|Tool Result| ChatRoute
-    ChatRoute -->|Synthesize Voice| TTSRoute
-    TTSRoute -->|Binary Audio/MPEG| EdgeTTS
-    EdgeTTS -->|Audio Stream| TTSRoute
-    TTSRoute -->|Stream to Client| Audio
-    ChatRoute -->|Generate Summary| DigestRoute
-    DigestRoute -->|LLM Synthesis| LLM
+    Chat <-->|Tool Calls| LLM
+    Chat -->|Execute| Tools
+    Tools -->|Verify| Safe
+    Safe <-->|REST API| GH
+    
+    %% Voice Pipeline
+    Chat -->|Synthesize| TTS
+    TTS <-->|Audio Stream| Edge
+    TTS -->|MP3 Stream| Audio
 ```
 
 ---
 
-## 🔄 Voice & Tool Calling Interaction Loop
+## Voice & Tool Calling Interaction Loop
+
+The following diagram illustrates how a voice command is processed, validated, and executed against the GitHub API.
 
 ```mermaid
 sequenceDiagram
     autonumber
     actor Dev as Developer
-    participant Browser as Client HUD
-    participant ChatAPI as /api/chat
-    participant ToolAPI as /api/tools/execute
-    participant Safe as safeGithubExecutor
-    participant GitHub as GitHub API
-    participant TTS as /api/tts
+    participant UI as Client HUD
+    participant API as Chat API
+    participant Exec as Tool Executor
+    participant Safe as Safe Guard
+    participant GH as GitHub API
+    participant TTS as Edge-TTS
 
-    Dev->>Browser: Holds Space & speaks ("Walk me through PR 1")
-    Browser->>ChatAPI: POST /api/chat { messages, language }
-    ChatAPI->>ChatAPI: Detect language & route system prompt
-    ChatAPI-->>Browser: Tool Call: get_pr_diff(pull_number: 1)
+    Dev->>UI: Hold Space & speak ("Walk me through PR 1")
+    UI->>API: Send transcript & context
+    API-->>UI: Request tool: get_pr_diff
+    UI->>Exec: Execute tool
+    Exec->>Safe: Validate permissions
+    Safe->>GH: Fetch pull request files
+    GH-->>Safe: Return diffs
+    Safe-->>Exec: Return sanitized diff
+    Exec-->>UI: Update UI with diff
     
-    Browser->>ToolAPI: POST /api/tools/execute { tool: "get_pr_diff", args }
-    ToolAPI->>Safe: Validate repository & permissions
-    Safe->>GitHub: GET /repos/:owner/:repo/pulls/1/files
-    GitHub-->>Safe: Return file diffs & patches
-    Safe-->>ToolAPI: Return sanitized diff
-    ToolAPI-->>Browser: Diff result payload
-    Browser->>Browser: Update DiffCanvasHUD file tree & diff viewer
-
-    Browser->>ChatAPI: POST /api/chat (Messages + Diff Result)
-    ChatAPI-->>Browser: Spoken summary + Amber fix card snippet
-    Browser->>TTS: GET /api/tts?text=...&lang=...
-    TTS-->>Browser: 200 audio/mpeg (Neural stream)
-    Browser->>Dev: Plays studio neural audio through speakers
-
-    opt Developer Interrupts (Barge-in)
-        Dev->>Browser: Press Space or Speak ("Wait, check line 60")
-        Browser->>Browser: cancelAllSpeech() instantly halts audio
+    UI->>API: Send diff context
+    API-->>UI: Generate spoken summary
+    UI->>TTS: Request audio stream
+    TTS-->>UI: Return neural audio
+    UI->>Dev: Play audio
+    
+    opt Developer Interrupts
+        Dev->>UI: Press Space or speak ("Wait, check line 60")
+        UI->>UI: Halt audio instantly
     end
 
-    Dev->>Browser: "Post that recommendation as a comment"
-    Browser->>ChatAPI: POST /api/chat
-    ChatAPI-->>Browser: Tool Call: post_review_comment(...)
-    Browser->>ToolAPI: POST /api/tools/execute
-    ToolAPI->>Safe: Validate path, line number & action cap
-    Safe->>GitHub: POST /repos/:owner/:repo/pulls/1/comments
-    GitHub-->>Safe: 201 Created (Comment URL)
-    Safe-->>Browser: Success response with GitHub URL
-    Browser->>Dev: "I've posted the comment on line 60."
+    Dev->>UI: "Post that recommendation as a comment"
+    UI->>API: Send command
+    API-->>UI: Request tool: post_comment
+    UI->>Exec: Execute tool
+    Exec->>Safe: Validate action cap & path
+    Safe->>GH: Post inline comment
+    GH-->>Safe: Return success
+    Safe-->>UI: Confirm action
+    UI->>Dev: Speak confirmation
 ```
 
 ---
 
-## 🌐 Studio Neural Voice Pipeline (100% Free)
+## Studio Neural Voice Pipeline
 
-CodeCast replaces robotic browser voices with Microsoft Azure Cognitive Speech neural voices via `@seepine/edge-tts` with **$0 API fees, no subscriptions, and zero credit exhaustion limits**:
+CodeCast replaces robotic browser voices with Microsoft Azure Cognitive Speech neural voices via `@seepine/edge-tts` with zero API fees and no credit limits.
 
-| Language | Default Neural Voice | Secondary Voice | Acoustic & Linguistic Profile |
-| :--- | :--- | :--- | :--- |
-| **English (`en-US`)** 🇺🇸 | **`en-US-JennyNeural`** | `en-US-GuyNeural` | Studio-grade prosody, natural breath pauses, handles technical code heteronyms without pitch drift. |
-| **Thai (`th-TH`)** 🇹🇭 | **`th-TH-PremwadeeNeural`** | `th-TH-NiwatNeural` | Flawless 5-tone contour precision; smooth code-switching for dev terms (`PR`, `diff`, `await`). |
-| **Japanese (`ja-JP`)** 🇯🇵 | **`ja-JP-NanamiNeural`** | `ja-JP-KeitaNeural` | Natural pitch accent, authentic peer-developer register, zero robotic sibilance. |
-| **Spanish (`es-ES`)** 🇪🇸 | **`es-ES-ElviraNeural`** | `es-ES-AlvaroNeural` | Crisp, natural conversational cadence for European and Latin American technical terms. |
-
----
-
-## 🛡️ Security & Enterprise Guardrails
-
-Every mutation against GitHub is guarded by [`safeGithubExecutor.ts`](file:///home/nawxtz/Desktop/Hackathons_Competitions_2026/Solo_Events/AssemblyAI%20-%20Voice%20Agent%20Hackathon/Project/codecast/lib/safeGithubExecutor.ts):
-
-* **Backend Secret Isolation**: `GITHUB_PAT` and `OPENROUTER_API_KEY` reside strictly on the server (`process.env`) and are never exposed to client-side code.
-* **Dry-Run Mode by Default**: `CODECAST_LIVE_WRITES=false` simulates write actions, previews payloads, and logs them in the HUD Audit Log without touching GitHub.
-* **Repository Whitelisting**: Strict checks ensure the agent only interacts with the explicitly authorized repository (`CODECAST_REPO_OWNER`/`CODECAST_REPO_NAME`).
-* **Duplicate Comment Prevention**: Automatically hashes file paths and line numbers to prevent duplicate comments on the same line.
-* **Action Cap**: Caps write operations to 8 actions per session to prevent accidental loops or spam.
-* **Audit Signature Prefix**: All posted comments are prepended with `🎙️ CodeCast (AI Voice Review):` for complete provenance and team transparency.
+| Language | Default Neural Voice | Acoustic & Linguistic Profile |
+| :--- | :--- | :--- |
+| **English** | `en-US-JennyNeural` | Studio-grade prosody, handles technical code heteronyms without pitch drift. |
+| **Thai** | `th-TH-PremwadeeNeural` | Flawless 5-tone contour precision; smooth code-switching for dev terms. |
+| **Japanese** | `ja-JP-NanamiNeural` | Natural pitch accent, authentic peer-developer register. |
+| **Spanish** | `es-ES-ElviraNeural` | Crisp, natural conversational cadence for technical terms. |
 
 ---
 
-## 🚀 Quickstart
+## Security & Enterprise Guardrails
+
+Every mutation against GitHub is guarded by `safeGithubExecutor.ts`:
+
+- **Backend Secret Isolation**: `GITHUB_PAT` and `OPENROUTER_API_KEY` reside strictly on the server and are never exposed to client-side code.
+- **Dry-Run Mode by Default**: `CODECAST_LIVE_WRITES=false` simulates write actions, previews payloads, and logs them in the HUD Audit Log without touching GitHub.
+- **Repository Whitelisting**: Strict checks ensure the agent only interacts with the explicitly authorized repository.
+- **Duplicate Comment Prevention**: Automatically hashes file paths and line numbers to prevent duplicate comments on the same line.
+- **Action Cap**: Caps write operations to 8 actions per session to prevent accidental loops or spam.
+- **Audit Signature Prefix**: All posted comments are prepended with `CodeCast (AI Voice Review):` for complete provenance and team transparency.
+
+---
+
+## Quickstart
 
 ### 1. Prerequisites
-* **Node.js**: v20+ or v24+
-* **npm** or **pnpm**
-* **GitHub Personal Access Token (PAT)**: Scoped to your target repository (`Pull requests: Read & Write`, `Contents: Read-only`).
-* **OpenRouter API Key**: Free tier access (`sk-or-...`).
+- **Node.js**: v20+ or v24+
+- **npm** or **pnpm**
+- **GitHub Personal Access Token (PAT)**: Scoped to your target repository (`Pull requests: Read & Write`, `Contents: Read-only`).
+- **OpenRouter API Key**: Free tier access (`sk-or-...`).
 
 ### 2. Installation
 ```bash
@@ -194,7 +188,7 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 ---
 
-## 🧪 Testing & Verification
+## Testing & Verification
 
 CodeCast includes a comprehensive automated test suite:
 
@@ -211,21 +205,7 @@ npm run build
 
 ---
 
-## 🎬 90-Second Demo Flow
-
-| Time | Action | Voice Command / Interaction | What Happens |
-| :--- | :--- | :--- | :--- |
-| **0:00** | Open App | Navigate to `http://localhost:3000` | HUD loads PR #1 diff automatically. |
-| **0:15** | Walkthrough | Hold Space: *"Cast, walk me through PR 1."* | AI reviews diff, explains coupon validation, speaks concise 1-sentence summary. |
-| **0:30** | Fix Card | Inspect Sidebar | Amber recommendation card appears with line `src/checkout.ts:60` and clean code fix. |
-| **0:45** | Barge-in | Press Space while AI speaks: *"Wait, line 60!"* | Instant audio cutoff. Agent stops speaking immediately. |
-| **1:00** | Post Comment | *"Post that recommendation as an inline comment."* | Real inline GitHub comment is created via `safeGithubExecutor`. |
-| **1:15** | Submit Review | *"Submit the review requesting changes."* | Official GitHub PR review submitted with `REQUEST_CHANGES` status. |
-| **1:30** | Review Digest | Switch to **Digest** tab | Post-session markdown summary ready for Slack/Jira. |
-
----
-
-## 📂 Project Structure
+## Project Structure
 
 ```text
 codecast/
@@ -241,8 +221,8 @@ codecast/
 ├── components/
 │   ├── DiffCanvasHUD.tsx         # Unified review HUD (Diff, File Tree, Audit Log)
 │   ├── DiffViewer.tsx            # Line-by-line diff viewer with comment anchors
-│   ├── FixRecommendationCard.tsx # Amber recommendation cards for code fixes
-│   └── VoiceOrb.tsx              # Animated SVG voice orb with listening/speaking states
+│   ├── FixRecommendationCard.tsx # Recommendation cards for code fixes
+│   └── VoiceOrb.tsx              # Animated SVG voice orb with listening states
 ├── lib/
 │   ├── githubClient.ts           # Octokit client for reading diffs & files
 │   ├── safeGithubExecutor.ts     # Whitelist, dry-run, action cap, deduplication
@@ -261,6 +241,4 @@ codecast/
 
 ---
 
-## 📄 License
-
-MIT © [Nawxtz](https://github.com/Nawxtz)
+Built by [Nawxtz](https://github.com/Nawxtz)
