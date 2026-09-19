@@ -1,0 +1,37 @@
+{
+  "name": "codecast",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "verify:env": "tsx scripts/verify-env.ts",
+    "verify:github:read": "tsx scripts/test-github-read.ts",
+    "verify:github:write:dry": "tsx scripts/test-github-write-dry.ts",
+    "seed:demo": "tsx scripts/seed-demo-repo.ts",
+    "reset:demo": "tsx scripts/reset-demo-repo.ts"
+  },
+  "dependencies": {
+    "@octokit/rest": "^21.0.0",
+    "@seepine/edge-tts": "^1.4.1",
+    "next": "^14.2.0",
+    "openai": "^4.56.0",
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0",
+    "zustand": "^4.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "eslint": "^8.0.0",
+    "eslint-config-next": "^14.2.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.4.0",
+    "vitest": "^1.6.0"
+  }
+}
