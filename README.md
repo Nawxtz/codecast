@@ -1,11 +1,11 @@
 # CodeCast
 
-> **Voice-Native GitHub Pull Request Review Copilot**  
-> Review, discuss, and comment on pull requests hands-free with low-latency voice, studio-grade neural speech, interactive diff canvas, and safe GitHub tool execution.
+> **Voice-Native GitHub Pull Request Review & Codebase Copilot**  
+> Review, explore, and discuss pull requests and entire repositories hands-free with low-latency voice, studio-grade neural speech, interactive diff canvas, recursive file tree explorer, and safe GitHub tool execution.
 
 [![TypeScript](https://img.shields.io/badge/TypeScript-Strict-blue.svg)](https://www.typescriptlang.org/)
 [![Next.js](https://img.shields.io/badge/Next.js-14.2-black.svg)](https://nextjs.org/)
-[![Tests](https://img.shields.io/badge/Tests-114%2F114%20Passing-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/Tests-126%2F126%20Passing-brightgreen.svg)]()
 [![TTS](https://img.shields.io/badge/Neural%20TTS-100%25%20Free%20Edge--TTS-orange.svg)]()
 [![Model](https://img.shields.io/badge/AI-OpenRouter%20%2F%20Hermes%20Union%20Alpha-purple.svg)]()
 
@@ -13,8 +13,13 @@
 
 ## Overview
 
-Reviewing large pull requests by clicking through endless files and typing inline suggestions is slow and tiring. CodeCast transforms pull request reviews into a natural conversation:
+Reviewing pull requests or understanding unfamiliar codebases by clicking through endless files and typing inline suggestions is slow and tiring. CodeCast transforms pull request reviews and codebase exploration into a natural conversation:
 
+- **Dual GitHub Modes**:
+  - **🐙 GitHub PR**: Inspect live pull request diffs, highlight line-by-line changes, discuss logic, and post official review comments.
+  - **🌐 GitHub Repo**: Explore entire repository directory trees across any branch (🌿 main), browse code files, and ask architectural questions.
+- **IDE-Style Resizable Workspace**: Multi-panel workspace with draggable splitters (col-resize), drag-to-collapse (pulling past threshold snaps panels shut into margin strips), and instant restore controls via edge tabs and header toggles.
+- **Interactive File Tree Explorer**: VS Code / Cursor-style recursive file tree with folder expansion/collapse, folder file counts, file type badges (TS, TSX, CSS, JSON, SQL, MD), and real-time search filtering.
 - **Speak Naturally**: Hold `Space` (Push-to-Talk) or use continuous voice to explore diffs, question logic, and check edge cases.
 - **Instant Neural Speech**: The assistant speaks in studio-quality neural voices ($0 cost via Edge-TTS) with zero robotic speech artifacts.
 - **Instant Barge-In**: Interrupt the assistant at any millisecond by speaking or tapping `Space`. Audio playback halts instantly without buffering lag.
@@ -31,39 +36,45 @@ CodeCast uses a clean separation of concerns between the browser-based client, t
 ```mermaid
 graph TD
     subgraph Client [Client Browser]
-        UI[HUD & Diff Viewer]
-        Voice[Voice Orb & Mic]
-        Audio[Audio Player]
+        UI[HUD & Resizable Panels]
+        Tree[File Tree Explorer]
+        Viewer[Diff & Code Viewer]
+        Voice[Voice Orb & PTT Spacebar]
+        Audio[Audio Player & Instant Barge-in]
     end
 
-    subgraph Backend [Next.js Backend]
-        Chat[Chat API]
-        Tools[Tool Executor]
-        TTS[TTS Engine]
-        Safe[Safe Executor]
+    subgraph Backend [Next.js App Router Backend]
+        Chat[Chat API /api/chat]
+        Tools[Tool Executor /api/tools/execute]
+        RepoTree[Repo Tree API /api/github/tree]
+        TTS[TTS Engine /api/tts]
+        Digest[Digest Service /api/digest]
+        Safe[Safe GitHub Guard]
     end
 
-    subgraph External [External Services]
+    subgraph External [External Cloud Services]
         LLM[OpenRouter LLM]
-        Edge[Edge-TTS]
-        GH[GitHub API]
+        Edge[Microsoft Azure Edge-TTS]
+        GH[GitHub REST API]
     end
 
     %% Client Interactions
-    Voice -->|Speech| Chat
-    Audio -->|Interrupt| Voice
-    UI -->|State| Chat
+    Voice -->|Voice Input| Chat
+    Audio -->|Barge-in Interrupt| Voice
+    UI -->|Layout & Mode State| Chat
+    Tree -->|Select File / Path| Viewer
 
     %% Backend Interactions
-    Chat <-->|Tool Calls| LLM
-    Chat -->|Execute| Tools
-    Tools -->|Verify| Safe
-    Safe <-->|REST API| GH
+    Chat <-->|Tool Calling / Responses| LLM
+    Chat -->|Execute Tool| Tools
+    Tools -->|Verify Permissions & Action Caps| Safe
+    Safe <-->|Authenticated Requests| GH
+    RepoTree <-->|Fetch Branch Tree| GH
     
     %% Voice Pipeline
-    Chat -->|Synthesize| TTS
-    TTS <-->|Audio Stream| Edge
-    TTS -->|MP3 Stream| Audio
+    Chat -->|Synthesize Speech| TTS
+    TTS <-->|Neural Voice Stream| Edge
+    TTS -->|Audio Stream| Audio
 ```
 
 ---
@@ -91,7 +102,7 @@ sequenceDiagram
     Safe->>GH: Fetch pull request files
     GH-->>Safe: Return diffs
     Safe-->>Exec: Return sanitized diff
-    Exec-->>UI: Update UI with diff
+    Exec-->>UI: Update UI with diff & file tree
     
     UI->>API: Send diff context
     API-->>UI: Generate spoken summary
@@ -127,6 +138,20 @@ CodeCast replaces robotic browser voices with Microsoft Azure Cognitive Speech n
 | **Thai** | `th-TH-PremwadeeNeural` | Flawless 5-tone contour precision; smooth code-switching for dev terms. |
 | **Japanese** | `ja-JP-NanamiNeural` | Natural pitch accent, authentic peer-developer register. |
 | **Spanish** | `es-ES-ElviraNeural` | Crisp, natural conversational cadence for technical terms. |
+
+---
+
+## Workspace & Resizable Panels
+
+CodeCast features a modern, IDE-inspired workspace designed for focused code exploration and review:
+
+- **Draggable Splitters**: Adjust the width of the Voice panel, File Tree Explorer, Code Canvas, and Intelligence panel via `.splitter-handle` dividers with a cyan hover glow.
+- **Drag-to-Collapse**: Dragging any side panel past its collapse threshold (`< 100px` for side panels, `< 75px` for file tree) automatically snaps it closed into the margin, giving 100% screen width to the code canvas.
+- **Quick Collapse Buttons**: Built-in `◀` and `▶` buttons in each panel header allow instant one-click collapse.
+- **Instant Restore Controls**:
+  - **Collapsed Edge Strips**: Slim vertical tabs appear on screen margins (`🎙️ VOICE` on the left, `🧠 INTEL` on the right) for one-click reopening.
+  - **Header Layout Toggles**: `[ 🎙️ Voice ]`, `[ 🌲 Files ]`, and `[ 🧠 Intel ]` toggle buttons in the top navigation bar allow reopening any panel at any time.
+  - **Explorer Restore Button**: When the file tree is collapsed, a `🌲 Explorer (<count>)` restore pill appears in the code canvas.
 
 ---
 
@@ -190,13 +215,13 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 ## Testing & Verification
 
-CodeCast includes a comprehensive automated test suite:
+CodeCast includes a comprehensive automated test suite covering voice pipelines, speech synthesis, GitHub integrations, file trees, and security executor guardrails:
 
 ```bash
 # Run TypeScript strict typecheck (0 errors)
 npm run typecheck
 
-# Run Vitest unit & integration test suite (114 tests)
+# Run Vitest unit & integration test suite (126 tests across 10 test files)
 npm test
 
 # Run Next.js production build
@@ -211,32 +236,39 @@ npm run build
 codecast/
 ├── app/
 │   ├── api/
-│   │   ├── chat/route.ts         # LLM prompt, auto-detection, tool dispatch
-│   │   ├── digest/route.ts       # Post-review markdown digest generator
+│   │   ├── chat/route.ts          # LLM prompt, auto-detection, tool dispatch
+│   │   ├── digest/route.ts        # Post-review markdown digest generator
+│   │   ├── github/
+│   │   │   └── tree/route.ts      # GitHub repository tree fetcher
+│   │   ├── local/                 # Local workspace diff & file APIs
 │   │   ├── tools/execute/route.ts # Safe GitHub tool executor endpoint
-│   │   └── tts/route.ts          # Edge-TTS neural voice streaming
-│   ├── globals.css               # Linear/Vercel minimalist theme
-│   ├── layout.tsx                # App root layout & metadata
-│   └── page.tsx                  # Application entry point
+│   │   └── tts/route.ts           # Edge-TTS neural voice streaming
+│   ├── globals.css                # Minimalist dark theme & responsive HUD styles
+│   ├── layout.tsx                 # App root layout & metadata
+│   └── page.tsx                   # Application entry point
 ├── components/
-│   ├── DiffCanvasHUD.tsx         # Unified review HUD (Diff, File Tree, Audit Log)
-│   ├── DiffViewer.tsx            # Line-by-line diff viewer with comment anchors
-│   ├── FixRecommendationCard.tsx # Recommendation cards for code fixes
-│   └── VoiceOrb.tsx              # Animated SVG voice orb with listening states
+│   ├── DiffCanvasHUD.tsx          # Resizable HUD, splitters, edge tabs & layout state
+│   ├── DiffViewer.tsx             # Line-by-line diff viewer with comment anchors
+│   ├── FileTreeExplorer.tsx       # Recursive file tree with search & type badges
+│   ├── FixRecommendationCard.tsx  # Recommendation cards for code fixes
+│   └── VoiceOrb.tsx               # Animated SVG voice orb with listening states
 ├── lib/
-│   ├── githubClient.ts           # Octokit client for reading diffs & files
-│   ├── safeGithubExecutor.ts     # Whitelist, dry-run, action cap, deduplication
-│   ├── digestService.ts          # Post-review digest synthesis service
-│   ├── types.ts                  # Shared TypeScript interfaces & types
+│   ├── githubClient.ts            # Octokit client for reading diffs, trees & files
+│   ├── safeGithubExecutor.ts      # Whitelist, dry-run, action cap, deduplication
+│   ├── localProjectService.ts     # Local folder analysis & git diff parser
+│   ├── digestService.ts           # Post-review digest synthesis service
+│   ├── stores/
+│   │   └── useCastStore.ts        # Zustand global state store
+│   ├── types.ts                   # Shared TypeScript interfaces & types
 │   ├── language/
-│   │   └── detector.ts           # Multilingual heuristics & tag extractors
+│   │   └── detector.ts            # Multilingual heuristics & tag extractors
 │   └── voice/
-│       ├── speechRecognition.ts  # Web Speech API wrapper with tail buffer
-│       ├── speechSynthesis.ts    # Edge-TTS streaming audio player & barge-in
-│       └── useVoiceSession.ts    # Main voice session hook & turn-taking state
-├── docs/                         # Specification, PRD, architecture, security docs
-├── scripts/                      # Seed, reset, and verification scripts
-└── tests/                        # Vitest test suite (114 unit & route tests)
+│       ├── speechRecognition.ts   # Web Speech API wrapper with tail buffer
+│       ├── speechSynthesis.ts     # Edge-TTS streaming audio player & barge-in
+│       └── useVoiceSession.ts     # Main voice session hook & turn-taking state
+├── docs/                          # Specification, PRD, architecture, security docs
+├── scripts/                       # Seed, reset, and verification scripts
+└── tests/                         # Vitest test suite (126 unit & route tests)
 ```
 
 ---
