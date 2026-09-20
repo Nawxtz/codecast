@@ -59,13 +59,22 @@ interface SpeechRecognitionGlobals {
 
 type RecognitionState = "idle" | "starting" | "listening" | "stopping";
 
-let currentLanguage = "en-US";
+function normalizeLanguageCode(lang?: string): "th-TH" | "en-US" {
+  if (!lang) return "en-US";
+  const lower = lang.toLowerCase();
+  if (lower.startsWith("th")) {
+    return "th-TH";
+  }
+  return "en-US";
+}
+
+let currentLanguage: "th-TH" | "en-US" = "en-US";
 let activeRecognizerInstance: SpeechRecognizer | null = null;
 
 export function setLanguage(lang: string): void {
-  currentLanguage = lang;
+  currentLanguage = normalizeLanguageCode(lang);
   if (activeRecognizerInstance) {
-    activeRecognizerInstance.setLanguage(lang);
+    activeRecognizerInstance.setLanguage(currentLanguage);
   }
 }
 
@@ -97,11 +106,28 @@ function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function combineTranscripts(a: string, b: string): string {
+  if (!a) return b;
+  if (!b) return a;
+  if (a.endsWith(" ") || b.startsWith(" ")) {
+    return a + b;
+  }
+  const lastChar = a.charCodeAt(a.length - 1);
+  const firstChar = b.charCodeAt(0);
+  const isThai =
+    (lastChar >= 0x0e00 && lastChar <= 0x0e7f) ||
+    (firstChar >= 0x0e00 && firstChar <= 0x0e7f);
+  if (isThai) {
+    return a + b;
+  }
+  return a + " " + b;
+}
+
 export class SpeechRecognizer {
   private readonly handlers: SpeechRecognizerHandlers;
   private readonly continuous: boolean;
   private readonly interimResults: boolean;
-  private language: string;
+  private language: "th-TH" | "en-US";
   private recognition: NativeSpeechRecognition | null = null;
   private state: RecognitionState = "idle";
   private destroyed = false;
@@ -111,7 +137,7 @@ export class SpeechRecognizer {
     options: SpeechRecognizerOptions = {},
   ) {
     this.handlers = handlers;
-    this.language = options.lang ?? currentLanguage;
+    this.language = normalizeLanguageCode(options.lang ?? currentLanguage);
     this.continuous = options.continuous ?? true;
     this.interimResults = options.interimResults ?? true;
 
@@ -124,11 +150,12 @@ export class SpeechRecognizer {
     }
 
     const prevLang = this.language;
-    this.language = lang;
+    const targetLang = normalizeLanguageCode(lang);
+    this.language = targetLang;
 
     if (this.recognition) {
-      this.recognition.lang = lang;
-      if (prevLang !== lang && this.isListening()) {
+      this.recognition.lang = targetLang;
+      if (prevLang !== targetLang && this.isListening()) {
         try {
           this.recognition.stop();
         } catch {
@@ -153,30 +180,43 @@ export class SpeechRecognizer {
 
     activeRecognizerInstance = this;
 
-    if (this.state !== "idle") {
+    if (this.state === "starting" || this.state === "listening") {
       return;
     }
 
     try {
-      if (!this.recognition) {
-        const Constructor = getRecognitionConstructor();
-
-        if (!Constructor) {
-          throw new Error(
-            "Speech recognition is not supported in this environment.",
-          );
+      if (this.recognition) {
+        this.recognition.onstart = null;
+        this.recognition.onend = null;
+        this.recognition.onspeechstart = null;
+        this.recognition.onresult = null;
+        this.recognition.onerror = null;
+        try {
+          this.recognition.abort();
+        } catch {
+          // ignore
         }
-
-        this.recognition = new Constructor();
-        this.attachHandlers(this.recognition);
+        this.recognition = null;
       }
 
-      this.recognition.lang = this.language;
-      this.recognition.continuous = this.continuous;
-      this.recognition.interimResults = this.interimResults;
+      const Constructor = getRecognitionConstructor();
+
+      if (!Constructor) {
+        throw new Error(
+          "Speech recognition is not supported in this environment.",
+        );
+      }
+
+      const recognition = new Constructor();
+      const targetLang = normalizeLanguageCode(this.language);
+      recognition.lang = targetLang;
+      recognition.continuous = this.continuous;
+      recognition.interimResults = this.interimResults;
+      this.attachHandlers(recognition);
+      this.recognition = recognition;
 
       this.state = "starting";
-      this.recognition.start();
+      recognition.start();
     } catch (error: unknown) {
       this.state = "idle";
       this.handlers.onError?.(getErrorMessage(error));
@@ -297,31 +337,31 @@ export class SpeechRecognizer {
         return;
       }
 
-      for (
-        let index = event.resultIndex;
-        index < event.results.length;
-        index += 1
-      ) {
-        if (this.destroyed) {
-          return;
-        }
+      let cumulativeFinal = "";
+      let currentInterim = "";
 
-        const result = event.results[index];
+      for (let i = 0; i < event.results.length; i++) {
+        const result = event.results[i];
         const alternative = result?.[0];
-
-        if (!result || !alternative) {
-          continue;
+        if (!result || !alternative) continue;
+        const text = alternative.transcript;
+        if (result.isFinal) {
+          cumulativeFinal = combineTranscripts(cumulativeFinal, text);
+        } else {
+          currentInterim = combineTranscripts(currentInterim, text);
         }
+      }
 
-        const transcript = alternative.transcript;
+      const fullTranscript = combineTranscripts(cumulativeFinal, currentInterim).trim();
+      const lastResult = event.results[event.results.length - 1];
+      const isFinal = Boolean(lastResult?.isFinal) && currentInterim.trim().length === 0;
 
-        if (!result.isFinal && transcript.trim().length > 0) {
-          this.notifySpeechDetected();
-        }
+      if (!isFinal && fullTranscript.length > 0) {
+        this.notifySpeechDetected();
+      }
 
-        if (!this.destroyed) {
-          this.handlers.onResult?.(transcript, result.isFinal);
-        }
+      if (!this.destroyed && fullTranscript.length > 0) {
+        this.handlers.onResult?.(fullTranscript, isFinal);
       }
     };
 

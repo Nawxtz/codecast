@@ -29,6 +29,9 @@ export interface VoiceSession {
   isListening: boolean;
   isSpeaking: boolean;
   isPttActive: boolean;
+  liveTranscript: string;
+  voiceError: string | null;
+  clearVoiceError: () => void;
   language: string;
   setLanguage: (lang: string) => void;
   selectedVoiceURI?: string;
@@ -298,23 +301,36 @@ function isEditingText(): boolean {
   );
 }
 
-function greetingForLanguage(language: string): string {
-  const greetings: Record<string, string> = {
-    en: "Hello! I'm your CodeCast assistant. How can I help you today?",
-    th: "สวัสดีครับ ผมคือผู้ช่วยตรวจโค้ด CodeCast มีอะไรให้ผมช่วยดูไหมครับ",
-    ja: "こんにちは！CodeCastアシスタントです。何をお手伝いしましょうか？",
-    es: "¡Hola! Soy tu asistente de CodeCast. ¿Cómo puedo ayudarte hoy?",
-    fr: "Bonjour ! Je suis votre assistant CodeCast. Comment puis-je vous aider ?",
-    de: "Hallo! Ich bin dein CodeCast-Assistent. Wie kann ich dir helfen?",
-    it: "Ciao! Sono il tuo assistente CodeCast. Come posso aiutarti?",
-    pt: "Olá! Sou seu assistente do CodeCast. Como posso ajudar?",
-    ko: "안녕하세요! CodeCast 도우미입니다. 무엇을 도와드릴까요?",
-    zh: "你好！我是 CodeCast 助手。有什么可以帮你的吗？",
-    hi: "नमस्ते! मैं आपका CodeCast सहायक हूँ। मैं आपकी कैसे मदद कर सकता हूँ?",
-    ar: "مرحباً! أنا مساعد CodeCast. كيف يمكنني مساعدتك اليوم؟",
-  };
+function getInitialLanguage(): string {
+  if (typeof window !== "undefined") {
+    try {
+      const saved = localStorage.getItem("codecast_language");
+      if (saved && (saved === "th-TH" || saved.toLowerCase().startsWith("th"))) {
+        return "th-TH";
+      }
+      if (saved && (saved === "en-US" || saved.toLowerCase().startsWith("en"))) {
+        return "en-US";
+      }
+    } catch {
+      // ignore
+    }
+  }
+  if (
+    typeof navigator !== "undefined" &&
+    navigator.language &&
+    navigator.language.toLowerCase().startsWith("th")
+  ) {
+    return "th-TH";
+  }
+  return "en-US";
+}
 
-  return greetings[language.split("-")[0].toLowerCase()] ?? greetings.en;
+function greetingForLanguage(language: string): string {
+  const langKey = language.split("-")[0].toLowerCase();
+  if (langKey === "th") {
+    return "สวัสดีครับ ผมคือผู้ช่วยตรวจโค้ด CodeCast มีอะไรให้ผมช่วยดูไหมครับ";
+  }
+  return "Hello! I'm your CodeCast assistant. How can I help you today?";
 }
 
 export function useVoiceSession(): VoiceSession {
@@ -322,6 +338,8 @@ export function useVoiceSession(): VoiceSession {
   const [isListening, setIsListening] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isPttActive, setIsPttActive] = useState(false);
+  const [liveTranscript, setLiveTranscript] = useState("");
+  const [voiceError, setVoiceError] = useState<string | null>(null);
   const [language, setLanguageState] = useState<string>("en-US");
   const [selectedVoiceURI, setSelectedVoiceURIState] = useState<
     string | undefined
@@ -329,6 +347,10 @@ export function useVoiceSession(): VoiceSession {
   const [availableVoices, setAvailableVoices] = useState<
     SpeechSynthesisVoice[]
   >(() => getStudioVoicesForLanguage("en-US"));
+
+  const clearVoiceError = useCallback(() => {
+    setVoiceError(null);
+  }, []);
 
   const mountedRef = useRef(false);
   const recognizerRef = useRef<SpeechRecognizer | null>(null);
@@ -339,6 +361,7 @@ export function useVoiceSession(): VoiceSession {
   const pendingRef = useRef(false);
   const languageRef = useRef("en-US");
   const voiceRef = useRef<string | undefined>(getDefaultVoiceURIForLanguage("en-US"));
+  const lastTranscriptRef = useRef<string>("");
   const generationRef = useRef(0);
   const speechGenerationRef = useRef(0);
   const voicesGenerationRef = useRef(0);
@@ -498,8 +521,16 @@ export function useVoiceSession(): VoiceSession {
 
   const setLanguage = useCallback(
     (lang: string) => {
-      const nextLanguage = lang.trim();
-      if (!nextLanguage || !mountedRef.current) return;
+      const nextLanguage = lang.trim().toLowerCase().startsWith("th") ? "th-TH" : "en-US";
+      if (!mountedRef.current) return;
+
+      if (typeof window !== "undefined") {
+        try {
+          localStorage.setItem("codecast_language", nextLanguage);
+        } catch {
+          // ignore
+        }
+      }
 
       const studioVoices = getStudioVoicesForLanguage(nextLanguage);
       const defaultUri = getDefaultVoiceURIForLanguage(nextLanguage);
@@ -513,6 +544,7 @@ export function useVoiceSession(): VoiceSession {
 
       try {
         setRecognitionLanguage(nextLanguage);
+        recognizerRef.current?.setLanguage(nextLanguage);
       } catch {
         // Language selection still applies to chat and speech synthesis.
       }
@@ -547,10 +579,7 @@ export function useVoiceSession(): VoiceSession {
 
       interruptSpeech();
       const speechGeneration = speechGenerationRef.current;
-      speakingRef.current = true;
-      setIsSpeaking(true);
       stopRecognizer();
-      setConnectionState("speaking");
 
       let finished = false;
 
@@ -577,7 +606,7 @@ export function useVoiceSession(): VoiceSession {
 
       const wordCount = cleanedText.trim().split(/\s+/).length;
       const dynamicTimeoutMs = Math.max(
-        wordCount * 450 + 10_000,
+        wordCount * 450 + 8_000,
         MIN_SPEECH_TIMEOUT_MS,
       );
 
@@ -601,6 +630,12 @@ export function useVoiceSession(): VoiceSession {
         const playback: unknown = playNeuralAudio(cleanedText, {
           voiceURI: activeVoiceURI,
           lang: activeLang,
+          onStart: () => {
+            if (speechGeneration !== speechGenerationRef.current || !isCurrent(generation)) return;
+            speakingRef.current = true;
+            setIsSpeaking(true);
+            setConnectionState("speaking");
+          },
           onEnd: finish,
           onError: finish,
         });
@@ -817,6 +852,7 @@ export function useVoiceSession(): VoiceSession {
 
   const startSession = useCallback(() => {
     if (!mountedRef.current || !recognizerRef.current) return;
+    lastTranscriptRef.current = "";
     sessionActiveRef.current = true;
     if (!pendingRef.current && !speakingRef.current) startRecognizer();
   }, [startRecognizer]);
@@ -824,6 +860,7 @@ export function useVoiceSession(): VoiceSession {
   const stopSession = useCallback(() => {
     sessionActiveRef.current = false;
     pttRef.current = false;
+    lastTranscriptRef.current = "";
 
     if (mountedRef.current) setIsPttActive(false);
 
@@ -850,6 +887,14 @@ export function useVoiceSession(): VoiceSession {
   useEffect(() => {
     mountedRef.current = true;
 
+    // Sync saved language from client storage without causing SSR hydration mismatch
+    const initialLang = getInitialLanguage();
+    if (initialLang && initialLang !== "en-US") {
+      setLanguage(initialLang);
+    } else {
+      void loadVoices("en-US");
+    }
+
     const recognitionSupported = isSpeechRecognitionSupported();
     setIsSupported(recognitionSupported && isSpeechSynthesisSupported());
 
@@ -858,7 +903,7 @@ export function useVoiceSession(): VoiceSession {
 
     if (recognitionSupported) {
       try {
-        setRecognitionLanguage(languageRef.current);
+        setRecognitionLanguage(initialLang || languageRef.current);
 
         const handlers = {
           onStart: () => {
@@ -873,6 +918,9 @@ export function useVoiceSession(): VoiceSession {
               return;
             }
 
+            lastTranscriptRef.current = "";
+            setLiveTranscript("");
+            setVoiceError(null);
             acceptingResults = true;
             listeningRef.current = true;
             setIsListening(true);
@@ -882,7 +930,7 @@ export function useVoiceSession(): VoiceSession {
             if (disposed || pendingRef.current || speakingRef.current) return;
 
             let text: string | undefined;
-            let isFinal = final ?? true;
+            let isFinal = final ?? false;
 
             if (typeof value === "string") {
               text = value;
@@ -895,27 +943,64 @@ export function useVoiceSession(): VoiceSession {
               }
             }
 
-            if (!isFinal || !text?.trim()) return;
+            const trimmed = text?.trim();
+            if (trimmed) {
+              lastTranscriptRef.current = trimmed;
+              setLiveTranscript(trimmed);
+              setVoiceError(null);
+            }
+
+            // In Push-to-Talk mode, do not auto-submit while spacebar is still pressed!
+            // Wait for onKeyUp to submit the user's complete statement.
+            if (pttRef.current) {
+              return;
+            }
+
+            if (!isFinal || !trimmed) return;
 
             // Permit a final result delivered after a PTT stop(), but ignore
             // results from an explicitly stopped session.
             if (
               !acceptingResults &&
-              !sessionActiveRef.current &&
-              !pttRef.current
+              !sessionActiveRef.current
             ) {
               return;
             }
 
+            lastTranscriptRef.current = "";
+            setLiveTranscript("");
             acceptingResults = false;
-            void sendMessageRef.current(text).catch(() => {
-              if (!disposed) setConnectionState("error");
+            void sendMessageRef.current(trimmed).catch(() => {
+              if (!disposed) {
+                setConnectionState("error");
+                setVoiceError("Failed to send speech message.");
+              }
             });
           },
           onEnd: () => {
             if (disposed) return;
             listeningRef.current = false;
             setIsListening(false);
+
+            const pendingText = lastTranscriptRef.current.trim();
+            if (
+              pendingText &&
+              acceptingResults &&
+              !pendingRef.current &&
+              !speakingRef.current
+            ) {
+              lastTranscriptRef.current = "";
+              setLiveTranscript("");
+              acceptingResults = false;
+              void sendMessageRef.current(pendingText).catch(() => {
+                if (!disposed) {
+                  setConnectionState("error");
+                  setVoiceError("Failed to send speech message.");
+                }
+              });
+            } else {
+              setLiveTranscript("");
+            }
 
             if (!pendingRef.current && !speakingRef.current) {
               setConnectionState("idle");
@@ -935,6 +1020,7 @@ export function useVoiceSession(): VoiceSession {
 
             listeningRef.current = false;
             setIsListening(false);
+            setLiveTranscript("");
 
             if (code === "aborted") return;
 
@@ -943,6 +1029,16 @@ export function useVoiceSession(): VoiceSession {
               return;
             }
 
+            let userFriendlyMsg = "Speech recognition error: " + (code || "unknown");
+            if (code === "not-allowed" || code === "permission-denied") {
+              userFriendlyMsg = "Microphone access denied. Please allow microphone permissions in browser.";
+            } else if (code === "network") {
+              userFriendlyMsg = "Speech recognition network error. Please check your connection.";
+            } else if (code === "audio-capture") {
+              userFriendlyMsg = "No microphone found on this device.";
+            }
+
+            setVoiceError(userFriendlyMsg);
             acceptingResults = false;
             sessionActiveRef.current = false;
             pttRef.current = false;
@@ -954,6 +1050,7 @@ export function useVoiceSession(): VoiceSession {
 
         recognizerRef.current = createSpeechRecognizer(
           handlers as Parameters<typeof createSpeechRecognizer>[0],
+          { lang: languageRef.current },
         );
       } catch {
         recognizerRef.current = null;
@@ -1018,6 +1115,9 @@ export function useVoiceSession(): VoiceSession {
 
       if (pendingRef.current) cancelTurn();
 
+      lastTranscriptRef.current = "";
+      setLiveTranscript("");
+      setVoiceError(null);
       acceptingResults = true;
       pttRef.current = true;
       setIsPttActive(true);
@@ -1045,6 +1145,25 @@ export function useVoiceSession(): VoiceSession {
       tailBufferTimerRef.current = setTimeout(() => {
         tailBufferTimerRef.current = null;
         if (!pttRef.current && !sessionActiveRef.current) {
+          const pendingText = lastTranscriptRef.current.trim();
+          if (
+            pendingText &&
+            acceptingResults &&
+            !pendingRef.current &&
+            !speakingRef.current
+          ) {
+            lastTranscriptRef.current = "";
+            setLiveTranscript("");
+            acceptingResults = false;
+            void sendMessageRef.current(pendingText).catch(() => {
+              if (!disposed) {
+                setConnectionState("error");
+                setVoiceError("Failed to send speech message.");
+              }
+            });
+          } else {
+            setLiveTranscript("");
+          }
           stopRecognizer();
         }
       }, TAIL_BUFFER_MS);
@@ -1058,6 +1177,7 @@ export function useVoiceSession(): VoiceSession {
       const wasActive = pttRef.current;
       pttRef.current = false;
       setIsPttActive(false);
+      setLiveTranscript("");
       if (wasActive) stopRecognizer();
     };
 
@@ -1118,6 +1238,9 @@ export function useVoiceSession(): VoiceSession {
     isListening,
     isSpeaking,
     isPttActive,
+    liveTranscript,
+    voiceError,
+    clearVoiceError,
     language,
     setLanguage,
     selectedVoiceURI,

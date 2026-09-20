@@ -67,17 +67,44 @@ function cleanMarkdown(text: string): string {
 export function stripMarkdownForSpeech(raw: string, _lang: string = "en-US"): string {
   if (!raw) return "";
 
-  const fixHeadingRegex = /(?:###\s*⚠️?\s*What Needs to Be Fixed:|What Needs to Be Fixed)/i;
+  // 1. Check for common review / detailed analysis section headers in English and Thai
+  const fixHeadingRegex = /(?:###\s*⚠️?\s*(?:What Needs to Be Fixed|สิ่งที่ต้องแก้ไข|ข้อควรปรับปรุง|ข้อผิดพลาด|คำแนะนำ)|(?:What Needs to Be Fixed|สิ่งที่ต้องแก้ไข|ข้อควรปรับปรุง|ข้อผิดพลาด|คำแนะนำ))/i;
   const parts = raw.split(fixHeadingRegex);
 
-  if (parts.length > 1) {
-    const intro = parts[0]?.trim();
-    if (intro) {
-      return cleanMarkdown(intro);
+  let target = parts.length > 1 && parts[0]?.trim() ? parts[0].trim() : raw;
+
+  // 2. If preceded by a conversational intro and followed by a list (e.g. "- ", "* ", "1. "), isolate the intro
+  const listMatch = target.search(/(?:\r?\n\s*[-*•]\s+)|(?:\r?\n\s*\d+\.\s+)/);
+  if (listMatch > 10) {
+    const preamble = target.slice(0, listMatch).trim();
+    if (preamble.length >= 10) {
+      target = preamble;
     }
   }
 
-  return cleanMarkdown(raw);
+  // 3. Clean markdown formatting
+  let cleaned = cleanMarkdown(target);
+
+  // Strip trailing "เช่น:" or "for example:" if the list that followed was stripped
+  cleaned = cleaned.replace(/\s*(?:เช่น|for example|such as|for instance)[:：]?\s*$/i, "");
+
+  // 4. If text contains multiple sentences and exceeds conversational length (> 220 chars),
+  // isolate the first 1-2 key sentences so the voice assistant stays snappy and conversational.
+  if (cleaned.length > 220) {
+    const sentenceEndings = cleaned.match(/^.*?[.!?](?:\s+|$)/s);
+    if (sentenceEndings && sentenceEndings[0].length >= 20 && sentenceEndings[0].length <= 220) {
+      cleaned = sentenceEndings[0].trim();
+    } else {
+      const sliceIdx = cleaned.lastIndexOf(" ", 200);
+      if (sliceIdx > 60) {
+        cleaned = cleaned.slice(0, sliceIdx).trim();
+      } else {
+        cleaned = cleaned.slice(0, 200).trim();
+      }
+    }
+  }
+
+  return cleaned;
 }
 
 export function getAvailableVoices(): Promise<SpeechSynthesisVoice[]> {
@@ -181,16 +208,8 @@ interface StudioVoiceSpec {
 
 const STUDIO_NEURAL_VOICES: Record<string, StudioVoiceSpec[]> = {
   "th-TH": [
+    { name: "Niwat (Studio Neural - Fast)", voiceURI: "edge-tts:th-TH-NiwatNeural", lang: "th-TH" },
     { name: "Premwadee (Studio Neural - Edge TTS)", voiceURI: "edge-tts:th-TH-PremwadeeNeural", lang: "th-TH" },
-    { name: "Niwat (Studio Neural - Edge TTS)", voiceURI: "edge-tts:th-TH-NiwatNeural", lang: "th-TH" },
-  ],
-  "ja-JP": [
-    { name: "Nanami (Studio Neural - Edge TTS)", voiceURI: "edge-tts:ja-JP-NanamiNeural", lang: "ja-JP" },
-    { name: "Keita (Studio Neural - Edge TTS)", voiceURI: "edge-tts:ja-JP-KeitaNeural", lang: "ja-JP" },
-  ],
-  "es-ES": [
-    { name: "Elvira (Studio Neural - Edge TTS)", voiceURI: "edge-tts:es-ES-ElviraNeural", lang: "es-ES" },
-    { name: "Alvaro (Studio Neural - Edge TTS)", voiceURI: "edge-tts:es-ES-AlvaroNeural", lang: "es-ES" },
   ],
   "en-US": [
     { name: "Jenny (Studio Neural - Edge TTS)", voiceURI: "edge-tts:en-US-JennyNeural", lang: "en-US" },
@@ -308,6 +327,9 @@ export function isSpeaking(): boolean {
   return getSynthesis()?.speaking ?? false;
 }
 
+const clientAudioCache = new Map<string, string>();
+const MAX_CLIENT_AUDIO_CACHE = 50;
+
 export async function playNeuralAudio(
   text: string,
   options: SpeechSynthesisOptions = {},
@@ -340,19 +362,32 @@ export async function playNeuralAudio(
       url += `&voice=${encodeURIComponent(edgeVoice)}`;
     }
 
-    let res = await fetch(url);
-    if (!res.ok) {
-      // Retry once for cold-start resilience
-      await new Promise((r) => setTimeout(r, 400));
-      res = await fetch(url);
+    let audioUrl = clientAudioCache.get(url);
+    if (!audioUrl) {
+      let res = await fetch(url);
+      if (!res.ok) {
+        // Fast retry for transient network hiccups
+        await new Promise((r) => setTimeout(r, 200));
+        res = await fetch(url);
+      }
+
+      if (!res.ok) {
+        throw new Error(`TTS server responded with ${res.status}`);
+      }
+
+      const blob = await res.blob();
+      audioUrl = URL.createObjectURL(blob);
+
+      if (clientAudioCache.size >= MAX_CLIENT_AUDIO_CACHE) {
+        const oldest = clientAudioCache.entries().next().value;
+        if (oldest) {
+          URL.revokeObjectURL(oldest[1]);
+          clientAudioCache.delete(oldest[0]);
+        }
+      }
+      clientAudioCache.set(url, audioUrl);
     }
 
-    if (!res.ok) {
-      throw new Error(`TTS server responded with ${res.status}`);
-    }
-
-    const blob = await res.blob();
-    const audioUrl = URL.createObjectURL(blob);
     const audio = new Audio(audioUrl);
     currentNeuralAudio = audio;
 
@@ -364,7 +399,6 @@ export async function playNeuralAudio(
         if (currentNeuralAudio === audio) {
           currentNeuralAudio = null;
         }
-        URL.revokeObjectURL(audioUrl);
         if (error) {
           options.onError?.(error as SpeechSynthesisErrorEvent);
         } else {

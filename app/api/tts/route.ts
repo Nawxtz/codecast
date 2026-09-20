@@ -2,12 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { EdgeTTS } from "@seepine/edge-tts";
 
 const VOICE_MAP: Record<string, string> = {
-  "th-TH": "th-TH-PremwadeeNeural",
-  th: "th-TH-PremwadeeNeural",
-  "ja-JP": "ja-JP-NanamiNeural",
-  ja: "ja-JP-NanamiNeural",
-  "es-ES": "es-ES-ElviraNeural",
-  es: "es-ES-ElviraNeural",
+  "th-TH": "th-TH-NiwatNeural",
+  th: "th-TH-NiwatNeural",
   "en-US": "en-US-JennyNeural",
   en: "en-US-JennyNeural",
 };
@@ -29,13 +25,13 @@ function cleanMarkdown(text: string): string {
 const ALLOWED_EDGE_VOICES = new Set([
   "th-TH-PremwadeeNeural",
   "th-TH-NiwatNeural",
-  "ja-JP-NanamiNeural",
-  "ja-JP-KeitaNeural",
-  "es-ES-ElviraNeural",
-  "es-ES-AlvaroNeural",
   "en-US-JennyNeural",
   "en-US-GuyNeural",
 ]);
+
+// In-memory audio buffer cache to eliminate repeat synthesis delays
+const ttsMemoryCache = new Map<string, Buffer>();
+const MAX_CACHE_ENTRIES = 80;
 
 function getVoice(lang?: string, requestedVoice?: string): string {
   const normalizedVoice = requestedVoice?.replace(/^edge-tts:/i, "");
@@ -55,19 +51,38 @@ function getVoice(lang?: string, requestedVoice?: string): string {
 }
 
 async function handleTts(text: string, lang?: string, requestedVoice?: string) {
-  const cleaned = cleanMarkdown(text);
+  let cleaned = cleanMarkdown(text);
   if (!cleaned) {
     return NextResponse.json({ error: "Text is required." }, { status: 400 });
   }
 
+  // Cap synthesis input length to guarantee rapid synthesis (< 1s)
+  if (cleaned.length > 280) {
+    cleaned = cleaned.slice(0, 280).trim();
+  }
+
   const voice = getVoice(lang, requestedVoice);
+  const cacheKey = `${voice}:${lang ?? "default"}:${cleaned}`;
+
+  const cached = ttsMemoryCache.get(cacheKey);
+  if (cached) {
+    return new NextResponse(new Uint8Array(cached), {
+      status: 200,
+      headers: {
+        "Content-Type": "audio/mpeg",
+        "Cache-Control": "public, max-age=86400, s-maxage=86400",
+        "Content-Length": cached.byteLength.toString(),
+        "X-TTS-Cache": "HIT",
+      },
+    });
+  }
 
   const synthesize = async () => {
     const tts = new EdgeTTS({
       voice,
       lang: lang ?? "en-US",
-      outputFormat: "audio-24khz-96kbitrate-mono-mp3",
-      timeout: 25000,
+      outputFormat: "audio-24khz-48kbitrate-mono-mp3",
+      timeout: 8000,
     });
     return await tts.call(cleaned);
   };
@@ -84,12 +99,20 @@ async function handleTts(text: string, lang?: string, requestedVoice?: string) {
       ? result.data
       : Buffer.from(result.data);
 
+    // Save to LRU cache
+    if (ttsMemoryCache.size >= MAX_CACHE_ENTRIES) {
+      const oldestKey = ttsMemoryCache.keys().next().value;
+      if (oldestKey) ttsMemoryCache.delete(oldestKey);
+    }
+    ttsMemoryCache.set(cacheKey, buffer);
+
     return new NextResponse(new Uint8Array(buffer), {
       status: 200,
       headers: {
         "Content-Type": "audio/mpeg",
-        "Cache-Control": "public, max-age=3600, s-maxage=86400",
+        "Cache-Control": "public, max-age=86400, s-maxage=86400",
         "Content-Length": buffer.byteLength.toString(),
+        "X-TTS-Cache": "MISS",
       },
     });
   } catch (error) {

@@ -97,13 +97,9 @@ const CODECAST_TOOLS = [
 function getLanguageInstruction(language: string): string {
   switch (language) {
     case "th-TH":
-      return "The user is using Thai. You MUST reply in authentic, natural Thai for peer developers. Start response with [LANG:th-TH].";
-    case "ja-JP":
-      return "The user is using Japanese. You MUST reply in authentic, natural Japanese for peer developers. Start response with [LANG:ja-JP].";
-    case "es-ES":
-      return "The user is using Spanish. You MUST reply in authentic, natural Spanish for peer developers. Start response with [LANG:es-ES].";
+      return "The user is using Thai. You MUST reply in authentic, natural Thai for peer developers. Keep the spoken introductory summary concise (1-2 natural sentences) before any markdown details, so voice playback is immediate. Start response with [LANG:th-TH].";
     default:
-      return "Reply in English. Start response with [LANG:en-US].";
+      return "Reply in English. Keep the spoken introductory summary concise (1-2 natural sentences) before any markdown details, so voice playback is immediate. Start response with [LANG:en-US].";
   }
 }
 

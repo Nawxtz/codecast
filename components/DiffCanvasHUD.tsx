@@ -340,8 +340,10 @@ export default function DiffCanvasHUD() {
   const handlePickNativeDirectory = React.useCallback(async () => {
     if (typeof window !== "undefined" && "showDirectoryPicker" in window) {
       try {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const dirHandle = await (window as any).showDirectoryPicker({ mode: "read" });
+        const win = window as unknown as {
+          showDirectoryPicker?: (options?: { mode?: string }) => Promise<{ name: string }>;
+        };
+        const dirHandle = await win.showDirectoryPicker?.({ mode: "read" });
         if (dirHandle) {
           await loadLocalFolder(dirHandle.name);
           return;
@@ -385,8 +387,7 @@ export default function DiffCanvasHUD() {
     }
     return store.localFiles.map((f) => ({
       filename: f.path,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      status: (f.status as any) || "unchanged",
+      status: (f.status as PrDiffFile["status"]) || "unchanged",
       additions: 0,
       deletions: 0,
       patch: "",
@@ -771,11 +772,10 @@ export default function DiffCanvasHUD() {
             value={voice.language}
             onChange={(event) => voice.setLanguage(event.target.value)}
             aria-label="Language"
+            suppressHydrationWarning
           >
             <option value="en-US">English 🇺🇸</option>
             <option value="th-TH">ภาษาไทย (Thai) 🇹🇭</option>
-            <option value="ja-JP">日本語 (Japanese) 🇯🇵</option>
-            <option value="es-ES">Español (Spanish) 🇪🇸</option>
           </select>
 
           <label className="sr-only" htmlFor="codecast-voice">Voice sound</label>
@@ -785,6 +785,7 @@ export default function DiffCanvasHUD() {
             value={voice.selectedVoiceURI || ""}
             onChange={(event) => voice.setSelectedVoiceURI(event.target.value)}
             disabled={voice.availableVoices.length === 0}
+            suppressHydrationWarning
           >
             {voice.availableVoices.length === 0 ? (
               <option value="">System Default</option>
@@ -866,6 +867,42 @@ export default function DiffCanvasHUD() {
                 </button>
               </div>
 
+              <div className="language-toggle-bar">
+                <span className="lang-label">STT / TTS:</span>
+                <div className="lang-pill-group">
+                  <button
+                    type="button"
+                    className={`lang-pill ${voice.language === "en-US" ? "active" : ""}`}
+                    onClick={() => voice.setLanguage("en-US")}
+                    title="Switch speech to English"
+                  >
+                    🇺🇸 English
+                  </button>
+                  <button
+                    type="button"
+                    className={`lang-pill ${voice.language === "th-TH" ? "active" : ""}`}
+                    onClick={() => voice.setLanguage("th-TH")}
+                    title="เปลี่ยนเสียงเป็นภาษาไทย"
+                  >
+                    🇹🇭 ภาษาไทย
+                  </button>
+                </div>
+              </div>
+
+              {voice.voiceError && (
+                <div className="voice-error-banner" role="alert">
+                  <span>⚠️ {voice.voiceError}</span>
+                  <button
+                    type="button"
+                    onClick={voice.clearVoiceError}
+                    className="clear-error-btn"
+                    title="Dismiss"
+                  >
+                    ✕
+                  </button>
+                </div>
+              )}
+
               <div className="orb-container">
                 <VoiceOrb
                   state={voiceState}
@@ -876,11 +913,33 @@ export default function DiffCanvasHUD() {
                   {voice.isSpeaking
                     ? "Assistant is speaking"
                     : voice.isListening
-                      ? "Listening to you"
-                      : "Ready when you are"}
+                      ? (voice.language === "th-TH" ? "กำลังฟังภาษาไทย..." : "Listening to you...")
+                      : (voice.language === "th-TH" ? "พร้อมรับคำสั่งภาษาไทย" : "Ready when you are")}
                 </p>
                 <p className="muted hint">Click the orb to start or stop your session.</p>
               </div>
+
+              {(voice.isListening || voice.isPttActive || voice.liveTranscript) && (
+                <div className="live-transcript-card" role="status" aria-live="polite">
+                  <div className="live-transcript-header">
+                    <span className="live-indicator-dot" />
+                    <span className="live-lang-tag">
+                      {voice.language === "th-TH" ? "🇹🇭 กำลังตรวจจับเสียงภาษาไทย" : "🇺🇸 Live English STT"}
+                    </span>
+                  </div>
+                  <p className="live-transcript-body">
+                    {voice.liveTranscript ? (
+                      `“${voice.liveTranscript}”`
+                    ) : (
+                      <span className="muted">
+                        {voice.language === "th-TH"
+                          ? "พูดภาษาไทยได้เลยครับ (เช่น ตรวจ PR ให้หน่อย)..."
+                          : "Speak now (e.g. check this diff)..."}
+                      </span>
+                    )}
+                  </p>
+                </div>
+              )}
 
               {!voice.isSupported && (
                 <p className="notice">
@@ -1526,7 +1585,114 @@ export default function DiffCanvasHUD() {
           background: #67e8f914;
         }
         .diff-content { flex: 1; min-height: 0; min-width: 0; overflow: auto; }
-        .eyebrow { margin: 0 0 20px; color: #94a3b8; font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px; }
+        .eyebrow { margin: 0 0 12px; color: #94a3b8; font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px; }
+        .language-toggle-bar {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          background: #10141b;
+          border: 1px solid #1e2633;
+          border-radius: 6px;
+          padding: 6px 10px;
+          margin-bottom: 12px;
+        }
+        .lang-label {
+          font-size: 11px;
+          color: #94a3b8;
+          font-weight: 600;
+        }
+        .lang-pill-group {
+          display: flex;
+          gap: 4px;
+        }
+        .lang-pill {
+          padding: 3px 8px;
+          font-size: 11px;
+          border-radius: 4px;
+          border: 1px solid #1e2633;
+          background: #161b22;
+          color: #94a3b8;
+          cursor: pointer;
+          font-weight: 500;
+          transition: all 120ms ease;
+        }
+        .lang-pill:hover {
+          color: #f3f4f6;
+          border-color: #34d39960;
+        }
+        .lang-pill.active {
+          background: #34d39918;
+          color: #34d399;
+          border-color: #34d399;
+          font-weight: 700;
+          box-shadow: 0 0 8px #34d39920;
+        }
+        .voice-error-banner {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
+          padding: 8px 12px;
+          background: #ef444415;
+          border: 1px solid #ef444450;
+          border-radius: 6px;
+          color: #fca5a5;
+          font-size: 12px;
+          margin-bottom: 10px;
+        }
+        .clear-error-btn {
+          background: transparent;
+          border: none;
+          color: #fca5a5;
+          cursor: pointer;
+          padding: 0 4px;
+          font-size: 12px;
+        }
+        .live-transcript-card {
+          width: 100%;
+          background: #090b0f;
+          border: 1px solid #34d39970;
+          border-radius: 8px;
+          padding: 10px 12px;
+          margin: 10px 0;
+          box-shadow: 0 0 12px #34d39918;
+          animation: pulse-glow 2s infinite ease-in-out;
+        }
+        .live-transcript-header {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          margin-bottom: 6px;
+        }
+        .live-indicator-dot {
+          width: 8px;
+          height: 8px;
+          border-radius: 50%;
+          background: #34d399;
+          animation: live-blink 1s infinite alternate;
+        }
+        .live-lang-tag {
+          font-size: 10px;
+          font-weight: 700;
+          color: #34d399;
+          letter-spacing: 0.5px;
+          text-transform: uppercase;
+        }
+        .live-transcript-body {
+          margin: 0;
+          font-size: 13px;
+          line-height: 1.5;
+          color: #f3f4f6;
+          word-break: break-word;
+        }
+        @keyframes live-blink {
+          0% { opacity: 0.3; transform: scale(0.85); }
+          100% { opacity: 1; transform: scale(1.15); }
+        }
+        @keyframes pulse-glow {
+          0%, 100% { border-color: #34d39940; }
+          50% { border-color: #34d399a0; box-shadow: 0 0 16px #34d39930; }
+        }
         .orb-container { display: flex; flex-direction: column; align-items: center; padding: 4px 0 16px; text-align: center; }
         .voice-status { margin: 14px 0 6px; font-weight: 600; }
         .voice-status.speaking { color: #67e8f9; }

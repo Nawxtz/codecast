@@ -6,8 +6,16 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-Strict-blue.svg)](https://www.typescriptlang.org/)
 [![Next.js](https://img.shields.io/badge/Next.js-14.2-black.svg)](https://nextjs.org/)
 [![Tests](https://img.shields.io/badge/Tests-126%2F126%20Passing-brightgreen.svg)]()
-[![TTS](https://img.shields.io/badge/Neural%20TTS-100%25%20Free%20Edge--TTS-orange.svg)]()
+[![Neural TTS](https://img.shields.io/badge/Neural%20TTS-Sub--second%20Edge--TTS-orange.svg)]()
 [![Model](https://img.shields.io/badge/AI-OpenRouter%20%2F%20Hermes%20Union%20Alpha-purple.svg)]()
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FNawxtz%2Fcodecast&env=OPENROUTER_API_KEY,GITHUB_TOKEN)
+
+<div align="center">
+  <br />
+  <img src="docs/codecast-hero.png" alt="CodeCast Workspace Demo" width="100%" style="border-radius: 8px; border: 1px solid #30363d;" />
+  <p><em>CodeCast IDE Workspace: Voice Review Orb, Interactive Recursive File Tree, Syntax-Highlighted Diff Viewer, and AI Intelligence Panel</em></p>
+  <br />
+</div>
 
 ---
 
@@ -24,8 +32,7 @@ Reviewing pull requests or understanding unfamiliar codebases by clicking throug
 - **Instant Neural Speech**: The assistant speaks in studio-quality neural voices ($0 cost via Edge-TTS) with zero robotic speech artifacts.
 - **Instant Barge-In**: Interrupt the assistant at any millisecond by speaking or tapping `Space`. Audio playback halts instantly without buffering lag.
 - **Real GitHub Tool Execution**: Inspect diffs, validate files, post inline code review comments, and submit official reviews directly to GitHub.
-- **Enterprise Safety & Dry-Run**: Hardened executor with repository whitelisting, action caps, duplicate guards, and secret isolation.
-- **Multi-Language Native**: Full auto-detection and fluent review in English, Thai, Japanese, and Spanish.
+- **Bilingual Native**: Full auto-detection and fluent review in English and Thai (`th-TH`).
 
 ---
 
@@ -130,20 +137,29 @@ sequenceDiagram
 
 ## Studio Neural Voice Pipeline
 
-CodeCast replaces robotic browser voices with Microsoft Azure Cognitive Speech neural voices via `@seepine/edge-tts` with zero API fees and no credit limits.
+## Studio Neural Voice Pipeline
 
-| Language | Default Neural Voice | Acoustic & Linguistic Profile |
-| :--- | :--- | :--- |
-| **English** | `en-US-JennyNeural` | Studio-grade prosody, handles technical code heteronyms without pitch drift. |
-| **Thai** | `th-TH-PremwadeeNeural` | Flawless 5-tone contour precision; smooth code-switching for dev terms. |
-| **Japanese** | `ja-JP-NanamiNeural` | Natural pitch accent, authentic peer-developer register. |
-| **Spanish** | `es-ES-ElviraNeural` | Crisp, natural conversational cadence for technical terms. |
+CodeCast replaces robotic browser voices with Microsoft Azure Cognitive Speech neural voices via `@seepine/edge-tts` with sub-second response times, zero API fees, and no credit limits.
+
+| Language | Default Neural Voice | Acoustic & Linguistic Profile | Speed |
+| :--- | :--- | :--- | :--- |
+| **Thai** | `th-TH-NiwatNeural` | Fast neural engine, natural conversational dev tone, smooth English loanwords. | **~0.6s (Fast)** |
+| **Thai (Alt)** | `th-TH-PremwadeeNeural` | Studio-grade prosody; formal clarity for detailed code reviews. | ~3.5s |
+| **English** | `en-US-JennyNeural` | Studio prosody; handles technical code heteronyms without pitch drift. | **~0.8s (Fast)** |
+| **English (Alt)**| `en-US-GuyNeural` | Natural developer pair programming tone; casual cadence. | **~0.6s (Fast)** |
 
 ---
 
 ## Workspace & Resizable Panels
 
 CodeCast features a modern, IDE-inspired workspace designed for focused code exploration and review:
+
+<div align="center">
+  <br />
+  <img src="docs/codecast-repo-tree.png" alt="CodeCast Recursive File Tree Explorer" width="100%" style="border-radius: 8px; border: 1px solid #30363d;" />
+  <p><em>Recursive File Tree Explorer: Folder Expansion, Live File Counters, Colorized Language Badges, and Real-Time Search Filtering</em></p>
+  <br />
+</div>
 
 - **Draggable Splitters**: Adjust the width of the Voice panel, File Tree Explorer, Code Canvas, and Intelligence panel via `.splitter-handle` dividers with a cyan hover glow.
 - **Drag-to-Collapse**: Dragging any side panel past its collapse threshold (`< 100px` for side panels, `< 75px` for file tree) automatically snaps it closed into the margin, giving 100% screen width to the code canvas.
@@ -210,6 +226,27 @@ NEXT_PUBLIC_APP_URL=http://localhost:3000
 npm run dev
 ```
 Open [http://localhost:3000](http://localhost:3000) in your browser.
+
+---
+
+## 🚀 Deployment (Vercel)
+
+CodeCast is built on Next.js 14 and deploys seamlessly to [Vercel](https://vercel.com).
+
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FNawxtz%2Fcodecast&env=OPENROUTER_API_KEY,GITHUB_TOKEN)
+
+### Deploy in 2 Minutes:
+1. Push your code to GitHub:
+   ```bash
+   git push origin main
+   ```
+2. Import repository at [vercel.com/new](https://vercel.com/new).
+3. Add Environment Variables in the Vercel Dashboard:
+   - `OPENROUTER_API_KEY`: Your OpenRouter API Key (sk-or-v1-...)
+   - `OPENROUTER_MODEL`: `openrouter/free` (or your preferred model)
+   - `GITHUB_TOKEN`: Your GitHub Personal Access Token (repo scope)
+   - `NEXT_PUBLIC_APP_URL`: Your Vercel deployment URL (e.g. `https://codecast.vercel.app`)
+4. Click **Deploy**. Vercel will build and assign your live production link!
 
 ---
 

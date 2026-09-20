@@ -239,6 +239,51 @@ describe('voice pipeline', () => {
       expect(instance.stop).toHaveBeenCalled();
       expect(instance.abort).toHaveBeenCalled();
     });
+
+    it('configures th-TH language correctly on underlying SpeechRecognition instance', async () => {
+      const mod = await loadRecognition();
+      const recognizer = mod.createSpeechRecognizer({}, { lang: 'th-TH' });
+
+      recognizer.start();
+      const instance = MockSpeechRecognition.instances[0];
+      expect(instance).toBeDefined();
+      expect(instance.lang).toBe('th-TH');
+    });
+
+    it('accumulates Thai multi-segment transcripts without inserting spaces', async () => {
+      const mod = await loadRecognition();
+      const onResult = vi.fn();
+      const recognizer = mod.createSpeechRecognizer({ onResult }, { lang: 'th-TH' });
+
+      recognizer.start();
+      const instance = MockSpeechRecognition.instances[0];
+
+      // Simulate first segment interim
+      instance.emit('result', {
+        results: [
+          Object.assign([{ transcript: 'ช่วยตรวจ' }], { isFinal: false }),
+        ],
+      });
+      expect(onResult).toHaveBeenLastCalledWith('ช่วยตรวจ', false);
+
+      // Simulate first segment final + second segment interim
+      instance.emit('result', {
+        results: [
+          Object.assign([{ transcript: 'ช่วยตรวจ' }], { isFinal: true }),
+          Object.assign([{ transcript: 'โค้ดให้หน่อยครับ' }], { isFinal: false }),
+        ],
+      });
+      expect(onResult).toHaveBeenLastCalledWith('ช่วยตรวจโค้ดให้หน่อยครับ', false);
+
+      // Simulate both segments final
+      instance.emit('result', {
+        results: [
+          Object.assign([{ transcript: 'ช่วยตรวจ' }], { isFinal: true }),
+          Object.assign([{ transcript: 'โค้ดให้หน่อยครับ' }], { isFinal: true }),
+        ],
+      });
+      expect(onResult).toHaveBeenLastCalledWith('ช่วยตรวจโค้ดให้หน่อยครับ', true);
+    });
   });
 
   describe('speechSynthesis', () => {
@@ -299,30 +344,22 @@ describe('voice pipeline', () => {
       const best = await mod.getBestVoiceForLanguage('th-TH');
 
       expect(best).toBeDefined();
-      expect(best?.voiceURI).toBe('edge-tts:th-TH-PremwadeeNeural');
+      expect(best?.voiceURI).toBe('edge-tts:th-TH-NiwatNeural');
     });
 
     it('getStudioVoicesForLanguage returns synchronous voices without delay', async () => {
       const mod = await loadSynthesis();
       const thaiVoices = mod.getStudioVoicesForLanguage('th-TH');
       expect(thaiVoices.length).toBeGreaterThanOrEqual(2);
-      expect(thaiVoices[0].voiceURI).toBe('edge-tts:th-TH-PremwadeeNeural');
+      expect(thaiVoices[0].voiceURI).toBe('edge-tts:th-TH-NiwatNeural');
 
       const englishVoices = mod.getStudioVoicesForLanguage('en-US');
       expect(englishVoices[0].voiceURI).toBe('edge-tts:en-US-JennyNeural');
-
-      const japaneseVoices = mod.getStudioVoicesForLanguage('ja-JP');
-      expect(japaneseVoices[0].voiceURI).toBe('edge-tts:ja-JP-NanamiNeural');
-
-      const spanishVoices = mod.getStudioVoicesForLanguage('es-ES');
-      expect(spanishVoices[0].voiceURI).toBe('edge-tts:es-ES-ElviraNeural');
     });
 
     it('getDefaultVoiceURIForLanguage returns correct default URI per language', async () => {
       const mod = await loadSynthesis();
-      expect(mod.getDefaultVoiceURIForLanguage('th-TH')).toBe('edge-tts:th-TH-PremwadeeNeural');
-      expect(mod.getDefaultVoiceURIForLanguage('ja-JP')).toBe('edge-tts:ja-JP-NanamiNeural');
-      expect(mod.getDefaultVoiceURIForLanguage('es-ES')).toBe('edge-tts:es-ES-ElviraNeural');
+      expect(mod.getDefaultVoiceURIForLanguage('th-TH')).toBe('edge-tts:th-TH-NiwatNeural');
       expect(mod.getDefaultVoiceURIForLanguage('en-US')).toBe('edge-tts:en-US-JennyNeural');
     });
 
@@ -354,24 +391,6 @@ const isValid = await validateToken(token);
         expect(spoken).not.toContain('What Needs to Be Fixed');
       });
 
-      it('isolates clean conversational intro without canned assistant cues for ja-JP', async () => {
-        const mod = await loadSynthesis();
-        const spoken = mod.stripMarkdownForSpeech(reviewWithCard, 'ja-JP');
-
-        expect(spoken).toBe('In src/auth.ts, line 55 is not awaiting validateToken.');
-        expect(spoken).not.toContain('画面下の修正カードをご確認ください。');
-        expect(spoken).not.toContain('What Needs to Be Fixed');
-      });
-
-      it('isolates clean conversational intro without canned assistant cues for es-ES', async () => {
-        const mod = await loadSynthesis();
-        const spoken = mod.stripMarkdownForSpeech(reviewWithCard, 'es-ES');
-
-        expect(spoken).toBe('In src/auth.ts, line 55 is not awaiting validateToken.');
-        expect(spoken).not.toContain('Te dejé la solución en la tarjeta de abajo.');
-        expect(spoken).not.toContain('What Needs to Be Fixed');
-      });
-
       it('preserves full clean message when no fix card exists', async () => {
         const mod = await loadSynthesis();
         const cleanMsg = 'PR #2 looks clean—no blocking issues found.';
@@ -379,6 +398,38 @@ const isValid = await validateToken(token);
 
         expect(spoken).toBe('PR 2 looks clean—no blocking issues found.');
         expect(spoken).not.toContain("I've placed the fix recommendation");
+      });
+
+      it('isolates conversational preamble before bullet lists in Thai', async () => {
+        const mod = await loadSynthesis();
+        const msgWithBullets = `สวัสดีครับ! ผมคือ **CodeCast Voice Reviewer** ครับ ผมเป็นผู้ช่วยผู้เชี่ยวชาญด้านการตรวจสอบโค้ด (Code Review) ครับ
+
+ผมทำได้หลายอย่าง เช่น:
+
+- 🔍 **ตรวจสอบ Pull Request** — ดู diff และวิเคราะห์โค้ด
+- 📝 **แสดงความคิดเห็น** — ให้ข้อเสนอแนะตรงบรรทัดโค้ด`;
+
+        const spoken = mod.stripMarkdownForSpeech(msgWithBullets, 'th-TH');
+        expect(spoken).toContain('CodeCast Voice Reviewer');
+        expect(spoken).not.toContain('ตรวจสอบ Pull Request');
+        expect(spoken).not.toContain('- 🔍');
+        expect(spoken.length).toBeLessThan(220);
+      });
+
+      it('isolates intro before Thai fix heading (### สิ่งที่ต้องแก้ไข)', async () => {
+        const mod = await loadSynthesis();
+        const thaiReview = `ผมได้ตรวจสอบโค้ดเรียบร้อยแล้วครับ พบจุดที่ควรปรับปรุง 2 จุด
+
+### สิ่งที่ต้องแก้ไข:
+1. การจัดการ Error ใน async function ขาด try-catch
+\`\`\`ts
+await apiCall();
+\`\`\``;
+
+        const spoken = mod.stripMarkdownForSpeech(thaiReview, 'th-TH');
+        expect(spoken).toBe('ผมได้ตรวจสอบโค้ดเรียบร้อยแล้วครับ พบจุดที่ควรปรับปรุง 2 จุด');
+        expect(spoken).not.toContain('สิ่งที่ต้องแก้ไข');
+        expect(spoken).not.toContain('apiCall');
       });
     });
   });
