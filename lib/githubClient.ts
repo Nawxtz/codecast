@@ -13,10 +13,10 @@ export function getOctokit(): Octokit {
     return cachedOctokit;
   }
 
-  const token = process.env.GITHUB_PAT?.trim();
+  const token = (process.env.GITHUB_PAT || process.env.GITHUB_TOKEN)?.trim();
 
   if (!token) {
-    throw new Error("Missing required environment variable: GITHUB_PAT.");
+    throw new Error("Missing required environment variable: GITHUB_PAT (or GITHUB_TOKEN).");
   }
 
   cachedOctokit = new Octokit({
