@@ -431,6 +431,24 @@ await apiCall();
         expect(spoken).not.toContain('สิ่งที่ต้องแก้ไข');
         expect(spoken).not.toContain('apiCall');
       });
+
+      it('strips spaced [ LANG:th-TH ] and isolates preamble from markdown tables and file paths', async () => {
+        const mod = await loadSynthesis();
+        const rawTableReview = `[ LANG:th-TH ]
+PR นี้เพิ่ม endpoint PUT สำหรับคำนวณผลกระทบรวมของเป้าหมายครับ
+
+📌 การเปลี่ยนแปลงหลัก
+| ไฟล์ | การแก้ไข | รายละเอียด |
+|------|----------|------------|
+| src/app/api/actions/route.ts | เพิ่มฟังก์ชัน PUT | คำนวณ totalImpact |`;
+
+        const spoken = mod.stripMarkdownForSpeech(rawTableReview, 'th-TH');
+        expect(spoken).toBe('PR นี้เพิ่ม endpoint PUT สำหรับคำนวณผลกระทบรวมของเป้าหมายครับ');
+        expect(spoken).not.toContain('LANG:th-TH');
+        expect(spoken).not.toContain('การเปลี่ยนแปลงหลัก');
+        expect(spoken).not.toContain('|');
+        expect(spoken).not.toContain('src/app/api/actions/route.ts');
+      });
     });
   });
 });

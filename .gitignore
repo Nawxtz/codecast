@@ -47,3 +47,4 @@ scripts/unionAlphaGen*
 AGENTS.md
 CLAUDE.md
 .github/
+.env*

@@ -10,13 +10,16 @@ const VOICE_MAP: Record<string, string> = {
 
 function cleanMarkdown(text: string): string {
   return text
-    .replace(/(?:###\s*⚠️?\s*What Needs to Be Fixed:|What Needs to Be Fixed)[\s\S]*$/i, "")
+    .replace(/\[\s*LANG\s*:\s*[\w-]+\s*\]/gi, " ")
+    .replace(/(?:###\s*⚠️?\s*(?:What Needs to Be Fixed|สิ่งที่ต้องแก้ไข|การเปลี่ยนแปลงหลัก)|(?:What Needs to Be Fixed|สิ่งที่ต้องแก้ไข|การเปลี่ยนแปลงหลัก))[\s\S]*$/i, "")
+    .replace(/^\s*\|.*$/gm, " ")
     .replace(/(`{3,}|~{3,})[\s\S]*?\1/g, " ")
     .replace(/#{1,6}\s+/g, "")
     .replace(/\*\*(.+?)\*\*/g, "$1")
     .replace(/\*(.+?)\*/g, "$1")
     .replace(/\`(.+?)\`/g, "$1")
     .replace(/\[(.+?)\]\(.+?\)/g, "$1")
+    .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE00}-\u{FE0F}]/gu, " ")
     .replace(/^[\s\-*]+/gm, "")
     .replace(/\s+/g, " ")
     .trim();
@@ -56,9 +59,20 @@ async function handleTts(text: string, lang?: string, requestedVoice?: string) {
     return NextResponse.json({ error: "Text is required." }, { status: 400 });
   }
 
-  // Cap synthesis input length to guarantee rapid synthesis (< 1s)
-  if (cleaned.length > 280) {
-    cleaned = cleaned.slice(0, 280).trim();
+  // Keep synthesis within conversational bounds without cutting mid-sentence
+  if (cleaned.length > 420) {
+    const boundary = cleaned.match(/^.*?[.!?](?:\s+|$)/s);
+    if (boundary && boundary[0].length >= 30 && boundary[0].length <= 420) {
+      cleaned = boundary[0].trim();
+    } else {
+      const thaiBoundary = cleaned.match(/^.*?(?:ครับ|ค่ะ|นะครับ|นะคะ)(?:\s+|$)/);
+      if (thaiBoundary && thaiBoundary[0].length >= 30 && thaiBoundary[0].length <= 420) {
+        cleaned = thaiBoundary[0].trim();
+      } else {
+        const lastSpace = cleaned.lastIndexOf(" ", 380);
+        cleaned = (lastSpace > 60 ? cleaned.slice(0, lastSpace) : cleaned.slice(0, 380)).trim();
+      }
+    }
   }
 
   const voice = getVoice(lang, requestedVoice);

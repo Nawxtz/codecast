@@ -34,8 +34,10 @@ export function isSpeechSynthesisSupported(): boolean {
 
 function cleanMarkdown(text: string): string {
   return text
+    .replace(/\[\s*LANG\s*:\s*[\w-]+\s*\]/gi, " ")
     .replace(/(`{3,}|~{3,})[\s\S]*?\1/g, " as shown in the code fix below ")
     .replace(/(?:`{3,}|~{3,})[\s\S]*$/g, " as shown in the code fix below ")
+    .replace(/^\s*\|.*$/gm, " ")
     .replace(/^\s{0,3}\[[^\]]+\]:[^\r\n]*$/gm, "")
     .replace(/!\[([^\]]*)\]\([^)\r\n]*\)/g, "$1")
     .replace(/\[([^\]]+)\]\([^)\r\n]*\)/g, "$1")
@@ -54,6 +56,7 @@ function cleanMarkdown(text: string): string {
     .replace(/[`*_~]/g, "")
     .replace(/[#[\]{}]/g, "")
     .replace(/\|/g, " ")
+    .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE00}-\u{FE0F}]/gu, " ")
     .replace(/&nbsp;/gi, " ")
     .replace(/&amp;/gi, "&")
     .replace(/&lt;/gi, "<")
@@ -67,14 +70,17 @@ function cleanMarkdown(text: string): string {
 export function stripMarkdownForSpeech(raw: string, _lang: string = "en-US"): string {
   if (!raw) return "";
 
+  // Strip any language tag at start or anywhere
+  const strippedRaw = raw.replace(/\[\s*LANG\s*:\s*[\w-]+\s*\]/gi, "").trim();
+
   // 1. Check for common review / detailed analysis section headers in English and Thai
-  const fixHeadingRegex = /(?:###\s*⚠️?\s*(?:What Needs to Be Fixed|สิ่งที่ต้องแก้ไข|ข้อควรปรับปรุง|ข้อผิดพลาด|คำแนะนำ)|(?:What Needs to Be Fixed|สิ่งที่ต้องแก้ไข|ข้อควรปรับปรุง|ข้อผิดพลาด|คำแนะนำ))/i;
-  const parts = raw.split(fixHeadingRegex);
+  const fixHeadingRegex = /(?:###\s*⚠️?\s*(?:What Needs to Be Fixed|สิ่งที่ต้องแก้ไข|ข้อควรปรับปรุง|ข้อผิดพลาด|คำแนะนำ|การเปลี่ยนแปลงหลัก|จุดที่อาจต้องปรับปรุง)|(?:What Needs to Be Fixed|สิ่งที่ต้องแก้ไข|ข้อควรปรับปรุง|ข้อผิดพลาด|คำแนะนำ|การเปลี่ยนแปลงหลัก|จุดที่อาจต้องปรับปรุง))/i;
+  const parts = strippedRaw.split(fixHeadingRegex);
 
-  let target = parts.length > 1 && parts[0]?.trim() ? parts[0].trim() : raw;
+  let target = parts.length > 1 && parts[0]?.trim() ? parts[0].trim() : strippedRaw;
 
-  // 2. If preceded by a conversational intro and followed by a list (e.g. "- ", "* ", "1. "), isolate the intro
-  const listMatch = target.search(/(?:\r?\n\s*[-*•]\s+)|(?:\r?\n\s*\d+\.\s+)/);
+  // 2. If preceded by a conversational intro and followed by a list or table (e.g. "- ", "* ", "1. ", "|"), isolate the intro
+  const listMatch = target.search(/(?:\r?\n\s*[-*•]\s+)|(?:\r?\n\s*\d+\.\s+)|(?:\r?\n\s*\|)/);
   if (listMatch > 10) {
     const preamble = target.slice(0, listMatch).trim();
     if (preamble.length >= 10) {
@@ -88,18 +94,25 @@ export function stripMarkdownForSpeech(raw: string, _lang: string = "en-US"): st
   // Strip trailing "เช่น:" or "for example:" if the list that followed was stripped
   cleaned = cleaned.replace(/\s*(?:เช่น|for example|such as|for instance)[:：]?\s*$/i, "");
 
-  // 4. If text contains multiple sentences and exceeds conversational length (> 220 chars),
-  // isolate the first 1-2 key sentences so the voice assistant stays snappy and conversational.
-  if (cleaned.length > 220) {
+  // 4. Conversational speech length guard:
+  // If text is excessively long (> 380 chars), isolate the key initial sentences so TTS remains rapid and conversational.
+  if (cleaned.length > 380) {
+    // Check for standard sentence endings
     const sentenceEndings = cleaned.match(/^.*?[.!?](?:\s+|$)/s);
-    if (sentenceEndings && sentenceEndings[0].length >= 20 && sentenceEndings[0].length <= 220) {
+    if (sentenceEndings && sentenceEndings[0].length >= 20 && sentenceEndings[0].length <= 380) {
       cleaned = sentenceEndings[0].trim();
     } else {
-      const sliceIdx = cleaned.lastIndexOf(" ", 200);
-      if (sliceIdx > 60) {
-        cleaned = cleaned.slice(0, sliceIdx).trim();
+      // For Thai or text without period punctuation, look for newline, polite particles, or space boundary
+      const thaiEnding = cleaned.match(/^.*?(?:ครับ|ค่ะ|นะครับ|นะคะ)(?:\s+|$)/);
+      if (thaiEnding && thaiEnding[0].length >= 20 && thaiEnding[0].length <= 380) {
+        cleaned = thaiEnding[0].trim();
       } else {
-        cleaned = cleaned.slice(0, 200).trim();
+        const sliceIdx = cleaned.lastIndexOf(" ", 320);
+        if (sliceIdx > 80) {
+          cleaned = cleaned.slice(0, sliceIdx).trim();
+        } else {
+          cleaned = cleaned.slice(0, 320).trim();
+        }
       }
     }
   }

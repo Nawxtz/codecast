@@ -411,8 +411,12 @@ export function FixRecommendationCard({
   role = "assistant",
 }: FixRecommendationCardProps) {
   const isUser = role === "user";
+  const sanitizedText =
+    typeof text === "string"
+      ? text.replace(/\[\s*LANG\s*:\s*[\w-]+\s*\]/gi, "").trim()
+      : "";
   const recommendation =
-    role === "assistant" ? splitRecommendation(text) : null;
+    role === "assistant" ? splitRecommendation(sanitizedText) : null;
 
   return (
     <div
@@ -452,7 +456,7 @@ export function FixRecommendationCard({
               : styles.bubble
           }
         >
-          <MarkdownBody text={text} />
+          <MarkdownBody text={sanitizedText} />
         </div>
       )}
     </div>

@@ -32,6 +32,16 @@ describe("Language Detector", () => {
     const en = extractLanguageTag("[LANG:en-US] PR looks clean");
     expect(en.language).toBe("en-US");
     expect(en.cleanContent).toBe("PR looks clean");
+
+    // Spaced tags: [ LANG:th-TH ]
+    const spaced = extractLanguageTag("[ LANG:th-TH ] PR นี้เพิ่ม endpoint PUT");
+    expect(spaced.language).toBe("th-TH");
+    expect(spaced.cleanContent).toBe("PR นี้เพิ่ม endpoint PUT");
+
+    // Multi-line and echoed question before tag
+    const multiline = extractLanguageTag("PR 1 แก้อะไรบ้าง\n[ LANG:th-TH ]\nPR นี้เพิ่ม endpoint สำหรับคำนวณ", "PR 1 แก้อะไรบ้าง");
+    expect(multiline.language).toBe("th-TH");
+    expect(multiline.cleanContent).toBe("PR นี้เพิ่ม endpoint สำหรับคำนวณ");
   });
 
   it("falls back to heuristic detection if language tag is missing", () => {
