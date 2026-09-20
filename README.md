@@ -233,7 +233,7 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 CodeCast is built on Next.js 14 and deploys seamlessly to [Vercel](https://vercel.com).
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FNawxtz%2Fcodecast&env=OPENROUTER_API_KEY,GITHUB_TOKEN)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FNawxtz%2Fcodecast&env=OPENROUTER_API_KEY,GITHUB_PAT,CODECAST_REPO_OWNER,CODECAST_REPO_NAME)
 
 ### Deploy in 2 Minutes:
 1. Push your code to GitHub:
@@ -241,12 +241,15 @@ CodeCast is built on Next.js 14 and deploys seamlessly to [Vercel](https://verce
    git push origin main
    ```
 2. Import repository at [vercel.com/new](https://vercel.com/new).
-3. Add Environment Variables in the Vercel Dashboard:
-   - `OPENROUTER_API_KEY`: Your OpenRouter API Key (sk-or-v1-...)
+3. Add Environment Variables in the Vercel Dashboard (**Settings** → **Environment Variables**):
+   - `CODECAST_REPO_OWNER`: Your GitHub username (e.g. `Nawxtz`)
+   - `CODECAST_REPO_NAME`: Target repository name (e.g. `EcoLog`)
+   - `GITHUB_PAT`: Your GitHub Personal Access Token (`GITHUB_TOKEN` is also supported)
+   - `OPENROUTER_API_KEY`: Your OpenRouter API Key (`sk-or-v1-...`)
    - `OPENROUTER_MODEL`: `openrouter/free` (or your preferred model)
-   - `GITHUB_TOKEN`: Your GitHub Personal Access Token (repo scope)
-   - `NEXT_PUBLIC_APP_URL`: Your Vercel deployment URL (e.g. `https://codecast.vercel.app`)
-4. Click **Deploy**. Vercel will build and assign your live production link!
+   - `CODECAST_LIVE_WRITES`: `false` (dry-run mode for safety)
+   - `NEXT_PUBLIC_APP_URL`: Your Vercel deployment URL (e.g. `https://codecastlive.vercel.app`)
+4. Click **Deploy** (or **Redeploy** if variables were added after first build). Vercel will build and assign your live production link!
 
 ---
 
