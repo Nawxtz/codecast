@@ -7,6 +7,7 @@ import type { PrDiffFile } from "@/lib/types";
 import VoiceOrb from "./VoiceOrb";
 import FixRecommendationCard from "./FixRecommendationCard";
 import DiffViewer from "./DiffViewer";
+import FileTreeExplorer from "./FileTreeExplorer";
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -110,13 +111,27 @@ export default function DiffCanvasHUD() {
   const store = useCastStore();
 
   const [diffFiles, setDiffFiles] = useState<PrDiffFile[]>([]);
+  const [localDiffFiles, setLocalDiffFiles] = useState<PrDiffFile[]>([]);
+  const [githubRepoFiles, setGithubRepoFiles] = useState<PrDiffFile[]>([]);
+  const [localPathInput, setLocalPathInput] = useState("");
+  const [showPathInput, setShowPathInput] = useState(false);
+  const [selectedFileContent, setSelectedFileContent] = useState<string | null>(null);
   const [loadingDiff, setLoadingDiff] = useState(false);
   const [diffError, setDiffError] = useState<string | null>(null);
   const [prInput, setPrInput] = useState(String(store.activePrNumber || 1));
+  const [githubBranchInput, setGithubBranchInput] = useState(store.githubBranch || "main");
+  const [githubRepoName, setGithubRepoName] = useState("EcoLog");
   const [message, setMessage] = useState("");
   const [sendingMessage, setSendingMessage] = useState(false);
   const [messageError, setMessageError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"transcript" | "audit">("transcript");
+  const [showExplorer, setShowExplorer] = useState(true);
+  const [explorerWidth, setExplorerWidth] = useState(250);
+  const [showLeftPanel, setShowLeftPanel] = useState(true);
+  const [leftPanelWidth, setLeftPanelWidth] = useState(300);
+  const [showRightPanel, setShowRightPanel] = useState(true);
+  const [rightPanelWidth, setRightPanelWidth] = useState(360);
+  const [resizing, setResizing] = useState<"left" | "explorer" | "right" | null>(null);
 
   const initialPr = useRef(store.activePrNumber || 1);
   const diffFilesRef = useRef<PrDiffFile[]>([]);
@@ -125,6 +140,11 @@ export default function DiffCanvasHUD() {
   const lastSyncedTool = useRef("");
   const transcriptEnd = useRef<HTMLDivElement | null>(null);
   const transcriptPanelRef = useRef<HTMLDivElement | null>(null);
+  const workspaceRef = useRef<HTMLDivElement | null>(null);
+  const diffPanelRef = useRef<HTMLDivElement | null>(null);
+  const lastLeftWidth = useRef(300);
+  const lastExplorerWidth = useRef(250);
+  const lastRightWidth = useRef(360);
   const sendingRef = useRef(false);
   const transcriptTabId = React.useId();
   const auditTabId = React.useId();
@@ -185,6 +205,302 @@ export default function DiffCanvasHUD() {
       }
     }
   }, []);
+
+  const handleSelectFile = React.useCallback(
+    async (
+      filename: string,
+      modeOverride?: "github_pr" | "github_repo" | "local_folder",
+    ) => {
+      const currentMode = modeOverride || useCastStore.getState().projectMode;
+      const currentBranch = useCastStore.getState().githubBranch || "main";
+      const currentFolder = useCastStore.getState().localFolderPath || "";
+
+      store.setActiveLocation(filename, store.activeLine);
+
+      if (currentMode === "local_folder") {
+        try {
+          const query = `?path=${encodeURIComponent(currentFolder)}&file=${encodeURIComponent(filename)}`;
+          const res = await fetch(`/api/local/files${query}`);
+          const data = await res.json();
+          if (data.success && typeof data.content === "string") {
+            setSelectedFileContent(data.content);
+          }
+        } catch {}
+      } else if (currentMode === "github_repo") {
+        try {
+          const res = await fetch("/api/tools/execute", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              tool: "explain_context",
+              args: { path: filename, ref: currentBranch },
+            }),
+          });
+          const data = await res.json();
+          if (data.status === "success" && data.result?.content) {
+            setSelectedFileContent(data.result.content);
+          }
+        } catch {}
+      }
+    },
+    [store],
+  );
+
+  const loadLocalFolder = React.useCallback(
+    async (folderPath?: string) => {
+      setLoadingDiff(true);
+      setDiffError(null);
+
+      try {
+        const targetPath = folderPath || localPathInput || "";
+        const query = targetPath ? `?path=${encodeURIComponent(targetPath)}` : "";
+
+        const [diffRes, filesRes] = await Promise.all([
+          fetch(`/api/local/diff${query}`),
+          fetch(`/api/local/files${query}`),
+        ]);
+
+        const diffData = await diffRes.json();
+        const filesData = await filesRes.json();
+
+        if (!diffData.success && !filesData.success) {
+          throw new Error(
+            diffData.error || filesData.error || "Failed to load local project.",
+          );
+        }
+
+        const projName =
+          diffData.projectName || filesData.projectName || "Local Project";
+        const resolvedFolder = diffData.folder || filesData.folder || "";
+        const allFiles = filesData.files || [];
+        const gitDiffs = diffData.diffFiles || [];
+
+        store.setLocalProject(projName, resolvedFolder, allFiles);
+        setLocalDiffFiles(gitDiffs);
+        setLocalPathInput(resolvedFolder);
+        setShowPathInput(false);
+
+        if (gitDiffs.length > 0) {
+          store.setLocalViewMode("changes");
+          store.setActiveLocation(gitDiffs[0].filename, null);
+        } else if (allFiles.length > 0) {
+          store.setLocalViewMode("all_files");
+          store.setActiveLocation(allFiles[0].path, null);
+          void handleSelectFile(allFiles[0].path, "local_folder");
+        }
+      } catch (err) {
+        setDiffError(
+          err instanceof Error ? err.message : "Failed to load local project.",
+        );
+      } finally {
+        setLoadingDiff(false);
+      }
+    },
+    [localPathInput, store, handleSelectFile],
+  );
+
+  const loadGithubRepoTree = React.useCallback(
+    async (branch = store.githubBranch || "main") => {
+      setLoadingDiff(true);
+      setDiffError(null);
+      try {
+        const res = await fetch(
+          `/api/github/tree?branch=${encodeURIComponent(branch)}`,
+        );
+        const data = await res.json();
+        if (!data.success) {
+          throw new Error(data.error || "Failed to load GitHub repository tree");
+        }
+        const files: PrDiffFile[] = (data.files || []).map((f: { path: string }) => ({
+          filename: f.path,
+          status: "unchanged" as const,
+          additions: 0,
+          deletions: 0,
+          patch: "",
+        }));
+        setGithubRepoFiles(files);
+        if (data.repo) setGithubRepoName(data.repo);
+        store.setGithubBranch(branch);
+        if (files.length > 0) {
+          const first = files[0].filename;
+          store.setActiveLocation(first, null);
+          void handleSelectFile(first, "github_repo");
+        }
+      } catch (err) {
+        setDiffError(
+          err instanceof Error ? err.message : "Failed to load GitHub tree",
+        );
+      } finally {
+        setLoadingDiff(false);
+      }
+    },
+    [store, handleSelectFile],
+  );
+
+  const handlePickNativeDirectory = React.useCallback(async () => {
+    if (typeof window !== "undefined" && "showDirectoryPicker" in window) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const dirHandle = await (window as any).showDirectoryPicker({ mode: "read" });
+        if (dirHandle) {
+          await loadLocalFolder(dirHandle.name);
+          return;
+        }
+      } catch (err: unknown) {
+        if (err instanceof Error && err.name === "AbortError") return;
+      }
+    }
+    setShowPathInput((prev) => !prev);
+  }, [loadLocalFolder]);
+
+  const displayedFiles = React.useMemo<PrDiffFile[]>(() => {
+    if (store.projectMode === "github_pr") {
+      return diffFiles;
+    }
+    if (store.projectMode === "github_repo") {
+      return githubRepoFiles.map((f) => ({
+        ...f,
+        content:
+          f.filename === store.activeFile
+            ? (selectedFileContent ?? undefined)
+            : undefined,
+      }));
+    }
+    if (store.localViewMode === "changes") {
+      const exists = localDiffFiles.some((f) => f.filename === store.activeFile);
+      if (!exists && store.activeFile) {
+        return [
+          ...localDiffFiles,
+          {
+            filename: store.activeFile,
+            status: "unchanged" as const,
+            additions: 0,
+            deletions: 0,
+            patch: "",
+            content: selectedFileContent ?? undefined,
+          },
+        ];
+      }
+      return localDiffFiles;
+    }
+    return store.localFiles.map((f) => ({
+      filename: f.path,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      status: (f.status as any) || "unchanged",
+      additions: 0,
+      deletions: 0,
+      patch: "",
+      content:
+        f.path === store.activeFile ? (selectedFileContent ?? undefined) : undefined,
+    }));
+  }, [
+    store.projectMode,
+    store.localViewMode,
+    store.localFiles,
+    store.activeFile,
+    diffFiles,
+    localDiffFiles,
+    githubRepoFiles,
+    selectedFileContent,
+  ]);
+
+  const explorerFiles = React.useMemo(() => {
+    if (store.projectMode === "github_repo") {
+      return githubRepoFiles.map((f) => f.filename);
+    }
+    if (store.projectMode === "local_folder") {
+      if (store.localFiles.length > 0) {
+        return store.localFiles.map((f) => f.path);
+      }
+      return localDiffFiles.map((f) => f.filename);
+    }
+    return diffFiles.map((f) => f.filename);
+  }, [store.projectMode, store.localFiles, githubRepoFiles, localDiffFiles, diffFiles]);
+
+  const explorerRootName = React.useMemo(() => {
+    if (store.projectMode === "github_repo") {
+      return (githubRepoName || "ecolog").toLowerCase();
+    }
+    if (store.projectMode === "local_folder") {
+      return (store.localProjectName || "ecolog").toLowerCase();
+    }
+    return (githubRepoName || "ecolog").toLowerCase();
+  }, [store.projectMode, githubRepoName, store.localProjectName]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const source = params.get("source");
+    const currentMode = useCastStore.getState().projectMode;
+    if (source === "github_repo" && currentMode !== "github_repo") {
+      useCastStore.getState().setProjectMode("github_repo");
+      void loadGithubRepoTree();
+    } else if (source === "local_folder" && currentMode !== "local_folder") {
+      useCastStore.getState().setProjectMode("local_folder");
+      void loadLocalFolder();
+    }
+  }, []);
+
+  const startResize = (panel: "left" | "explorer" | "right", e: React.MouseEvent) => {
+    e.preventDefault();
+    setResizing(panel);
+  };
+
+  useEffect(() => {
+    if (!resizing) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (resizing === "left") {
+        if (!workspaceRef.current) return;
+        const rect = workspaceRef.current.getBoundingClientRect();
+        const newWidth = e.clientX - rect.left;
+        if (newWidth < 100) {
+          setShowLeftPanel(false);
+        } else {
+          setShowLeftPanel(true);
+          const clamped = Math.max(180, Math.min(newWidth, rect.width * 0.45));
+          setLeftPanelWidth(clamped);
+          lastLeftWidth.current = clamped;
+        }
+      } else if (resizing === "right") {
+        if (!workspaceRef.current) return;
+        const rect = workspaceRef.current.getBoundingClientRect();
+        const newWidth = rect.right - e.clientX;
+        if (newWidth < 100) {
+          setShowRightPanel(false);
+        } else {
+          setShowRightPanel(true);
+          const clamped = Math.max(220, Math.min(newWidth, rect.width * 0.45));
+          setRightPanelWidth(clamped);
+          lastRightWidth.current = clamped;
+        }
+      } else if (resizing === "explorer") {
+        if (!diffPanelRef.current) return;
+        const rect = diffPanelRef.current.getBoundingClientRect();
+        const newWidth = e.clientX - rect.left;
+        if (newWidth < 75) {
+          setShowExplorer(false);
+        } else {
+          setShowExplorer(true);
+          const clamped = Math.max(140, Math.min(newWidth, rect.width * 0.6));
+          setExplorerWidth(clamped);
+          lastExplorerWidth.current = clamped;
+        }
+      }
+    };
+
+    const handleMouseUp = () => {
+      setResizing(null);
+    };
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [resizing]);
 
   useEffect(() => {
     for (let index = store.toolCalls.length - 1; index >= 0; index -= 1) {
@@ -314,26 +630,140 @@ export default function DiffCanvasHUD() {
       <header className="hud-header">
         <div className="brand-group">
           <span className="brand">Code<span>Cast</span></span>
-          <span className="badge pr-badge">#{store.activePrNumber || 1}</span>
+          {store.projectMode === "github_pr" ? (
+            <span className="badge pr-badge">#{store.activePrNumber || 1}</span>
+          ) : (
+            <span className="badge github-repo-badge">
+              🌐 {githubRepoFiles.length > 0 ? `${githubRepoFiles.length} files` : "Repo"}
+            </span>
+          )}
         </div>
 
         <div className="header-controls">
-          <form className="pr-form" onSubmit={handleLoadDiff}>
-            <label className="sr-only" htmlFor="codecast-pr">PR number</label>
-            <span className="muted" aria-hidden="true">PR #</span>
-            <input
-              id="codecast-pr"
-              type="number"
-              min={1}
-              step={1}
-              value={prInput}
-              onChange={(event) => setPrInput(event.target.value)}
-              required
-            />
-            <button type="submit" className="primary" disabled={loadingDiff}>
-              {loadingDiff ? "Loading…" : "Load Diff"}
+          <div className="source-switcher" role="radiogroup" aria-label="Project Source">
+            <button
+              type="button"
+              className={`source-btn ${store.projectMode === "github_pr" ? "active" : ""}`}
+              onClick={() => store.setProjectMode("github_pr")}
+            >
+              🐙 GitHub PR
             </button>
-          </form>
+            <button
+              type="button"
+              className={`source-btn ${store.projectMode === "github_repo" ? "active" : ""}`}
+              onClick={() => {
+                store.setProjectMode("github_repo");
+                if (githubRepoFiles.length === 0) {
+                  void loadGithubRepoTree();
+                } else if (store.activeFile && !selectedFileContent) {
+                  void handleSelectFile(store.activeFile, "github_repo");
+                }
+              }}
+            >
+              🌐 GitHub Repo
+            </button>
+          </div>
+
+          <div className="layout-toggles" role="group" aria-label="IDE Windows Layout">
+            <button
+              type="button"
+              className={`layout-toggle-btn ${showLeftPanel ? "active" : ""}`}
+              onClick={() => {
+                setShowLeftPanel((prev) => {
+                  const next = !prev;
+                  if (next && leftPanelWidth < 180) setLeftPanelWidth(lastLeftWidth.current || 300);
+                  return next;
+                });
+              }}
+              title={showLeftPanel ? "Hide Voice & Review panel" : "Open Voice & Review panel"}
+              aria-pressed={showLeftPanel}
+            >
+              🎙️ Voice
+            </button>
+            <button
+              type="button"
+              className={`layout-toggle-btn ${showExplorer ? "active" : ""}`}
+              onClick={() => {
+                setShowExplorer((prev) => {
+                  const next = !prev;
+                  if (next && explorerWidth < 140) setExplorerWidth(lastExplorerWidth.current || 250);
+                  return next;
+                });
+              }}
+              title={showExplorer ? "Hide File Tree Explorer" : "Open File Tree Explorer"}
+              aria-pressed={showExplorer}
+            >
+              🌲 Files
+            </button>
+            <button
+              type="button"
+              className={`layout-toggle-btn ${showRightPanel ? "active" : ""}`}
+              onClick={() => {
+                setShowRightPanel((prev) => {
+                  const next = !prev;
+                  if (next && rightPanelWidth < 220) setRightPanelWidth(lastRightWidth.current || 360);
+                  return next;
+                });
+              }}
+              title={showRightPanel ? "Hide Intelligence panel" : "Open Intelligence panel"}
+              aria-pressed={showRightPanel}
+            >
+              🧠 Intel
+            </button>
+          </div>
+
+          {store.projectMode === "github_repo" ? (
+            <div className="github-repo-toolbar">
+              <form
+                className="branch-form"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  void loadGithubRepoTree(githubBranchInput);
+                }}
+              >
+                <label className="sr-only" htmlFor="codecast-branch">Branch</label>
+                <span className="muted" aria-hidden="true">🌿</span>
+                <input
+                  id="codecast-branch"
+                  type="text"
+                  value={githubBranchInput}
+                  onChange={(e) => setGithubBranchInput(e.target.value)}
+                  placeholder="main"
+                  className="branch-input"
+                  required
+                />
+                <button type="submit" className="primary" disabled={loadingDiff}>
+                  {loadingDiff ? "Loading…" : "Browse Tree"}
+                </button>
+              </form>
+              <button
+                type="button"
+                className="icon-btn"
+                onClick={() => loadGithubRepoTree(githubBranchInput)}
+                disabled={loadingDiff}
+                title="Refresh GitHub tree"
+              >
+                🔄
+              </button>
+            </div>
+          ) : (
+            <form className="pr-form" onSubmit={handleLoadDiff}>
+              <label className="sr-only" htmlFor="codecast-pr">PR number</label>
+              <span className="muted" aria-hidden="true">PR #</span>
+              <input
+                id="codecast-pr"
+                type="number"
+                min={1}
+                step={1}
+                value={prInput}
+                onChange={(event) => setPrInput(event.target.value)}
+                required
+              />
+              <button type="submit" className="primary" disabled={loadingDiff}>
+                {loadingDiff ? "Loading…" : "Load Diff"}
+              </button>
+            </form>
+          )}
 
           <label className="sr-only" htmlFor="codecast-language">Language</label>
           <select
@@ -395,240 +825,375 @@ export default function DiffCanvasHUD() {
         </div>
       </header>
 
-      <div className="workspace">
-        <aside className="panel controls-panel" aria-label="Voice and review controls">
-          <h2 className="eyebrow">Voice Review</h2>
-
-          <div className="orb-container">
-            <VoiceOrb
-              state={voiceState}
-              isPttActive={voice.isPttActive}
-              onClick={voice.toggleSession}
-            />
-            <p className={`voice-status ${voiceState}`} role="status">
-              {voice.isSpeaking
-                ? "Assistant is speaking"
-                : voice.isListening
-                  ? "Listening to you"
-                  : "Ready when you are"}
-            </p>
-            <p className="muted hint">Click the orb to start or stop your session.</p>
-          </div>
-
-          {!voice.isSupported && (
-            <p className="notice">
-              Voice input is not supported in this browser. You can still type a query.
-            </p>
-          )}
-
-          <div className={`ptt-banner ${voice.isPttActive ? "active" : ""}`}>
-            <span>🎙️ Hold Space to Talk</span>
-            <kbd>Space</kbd>
-          </div>
-          <p className="muted hint shortcut-hint">
-            Use the shortcut outside text fields. Release to finish speaking.
-          </p>
-
-          <form className="message-form" onSubmit={handleSendMessage}>
-            <label htmlFor="codecast-message">Ask about this review</label>
-            <textarea
-              id="codecast-message"
-              value={message}
-              onChange={(event) => setMessage(event.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  if (message.trim() && !sendingMessage) {
-                    const form = e.currentTarget.form;
-                    if (form && typeof form.requestSubmit === "function") {
-                      form.requestSubmit();
-                    } else {
-                      void handleSendMessage(e as unknown as React.FormEvent<HTMLFormElement>);
-                    }
-                  }
-                }
-              }}
-              placeholder="Explain this change, find a bug, or suggest a fix…"
-              rows={5}
-            />
-            <p className="muted hint send-hint">Press Enter to send, Shift+Enter for newline</p>
+      <div
+        ref={workspaceRef}
+        className={`workspace ${resizing ? "is-resizing" : ""}`}
+      >
+        {/* Left Panel: Voice Review */}
+        {!showLeftPanel ? (
+          <div className="collapsed-panel-strip left-strip">
             <button
-              type="submit"
-              className="primary"
-              disabled={!message.trim() || sendingMessage}
+              type="button"
+              className="strip-btn"
+              onClick={() => {
+                setShowLeftPanel(true);
+                setLeftPanelWidth(lastLeftWidth.current || 300);
+              }}
+              title="Open Voice Review Panel"
+              aria-label="Open Voice Review Panel"
             >
-              {sendingMessage ? "Sending…" : "Send"}
+              <span className="strip-icon" aria-hidden="true">🎙️</span>
+              <span className="vertical-text">Voice</span>
             </button>
-            {messageError && <p className="error-message" role="alert">{messageError}</p>}
-          </form>
+          </div>
+        ) : (
+          <>
+            <aside
+              className="panel controls-panel"
+              style={{ width: `${leftPanelWidth}px`, flexShrink: 0 }}
+              aria-label="Voice and review controls"
+            >
+              <div className="panel-header-bar">
+                <h2 className="eyebrow">Voice Review</h2>
+                <button
+                  type="button"
+                  className="close-panel-btn"
+                  onClick={() => setShowLeftPanel(false)}
+                  title="Collapse Voice Review Panel"
+                  aria-label="Collapse Voice Review Panel"
+                >
+                  ◀
+                </button>
+              </div>
 
-          <details className="comments-drawer" open>
-            <summary>
-              Posted Comments
-              <span className="count">{store.postedComments.length}</span>
-            </summary>
-            {store.postedComments.length === 0 ? (
-              <p className="empty-state">Comments posted during this review appear here.</p>
-            ) : (
-              <ul className="comment-list">
-                {store.postedComments.map((comment, index) => {
-                  const item = asRecord(comment);
-                  const body =
-                    typeof comment === "string"
-                      ? comment
-                      : asText(item.body ?? item.text ?? item.content);
-                  const path = asText(item.path ?? item.file ?? item.filename);
-                  const line = asText(item.line);
-                  const url = safeCommentUrl(item.html_url ?? item.url);
+              <div className="orb-container">
+                <VoiceOrb
+                  state={voiceState}
+                  isPttActive={voice.isPttActive}
+                  onClick={voice.toggleSession}
+                />
+                <p className={`voice-status ${voiceState}`} role="status">
+                  {voice.isSpeaking
+                    ? "Assistant is speaking"
+                    : voice.isListening
+                      ? "Listening to you"
+                      : "Ready when you are"}
+                </p>
+                <p className="muted hint">Click the orb to start or stop your session.</p>
+              </div>
 
-                  return (
-                    <li key={asText(item.id) || `comment-${index}`} className="comment">
-                      {path && (
-                        <div className="comment-location">
-                          {path}{line ? `:${line}` : ""}
-                        </div>
-                      )}
-                      <p>{body || "Comment posted."}</p>
-                      {url && (
-                        <a href={url} target="_blank" rel="noopener noreferrer">
-                          View comment ↗
-                        </a>
-                      )}
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </details>
-        </aside>
+              {!voice.isSupported && (
+                <p className="notice">
+                  Voice input is not supported in this browser. You can still type a query.
+                </p>
+              )}
 
-        <section className="panel diff-panel" aria-label="Pull request diff canvas">
+              <div className={`ptt-banner ${voice.isPttActive ? "active" : ""}`}>
+                <span>🎙️ Hold Space to Talk</span>
+                <kbd>Space</kbd>
+              </div>
+              <p className="muted hint shortcut-hint">
+                Use the shortcut outside text fields. Release to finish speaking.
+              </p>
+
+              <form className="message-form" onSubmit={handleSendMessage}>
+                <label htmlFor="codecast-message">Ask about this review</label>
+                <textarea
+                  id="codecast-message"
+                  value={message}
+                  onChange={(event) => setMessage(event.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      if (message.trim() && !sendingMessage) {
+                        const form = e.currentTarget.form;
+                        if (form && typeof form.requestSubmit === "function") {
+                          form.requestSubmit();
+                        } else {
+                          void handleSendMessage(e as unknown as React.FormEvent<HTMLFormElement>);
+                        }
+                      }
+                    }
+                  }}
+                  placeholder="Explain this change, find a bug, or suggest a fix…"
+                  rows={5}
+                />
+                <p className="muted hint send-hint">Press Enter to send, Shift+Enter for newline</p>
+                <button
+                  type="submit"
+                  className="primary"
+                  disabled={!message.trim() || sendingMessage}
+                >
+                  {sendingMessage ? "Sending…" : "Send"}
+                </button>
+                {messageError && <p className="error-message" role="alert">{messageError}</p>}
+              </form>
+
+              <details className="comments-drawer" open>
+                <summary>
+                  Posted Comments
+                  <span className="count">{store.postedComments.length}</span>
+                </summary>
+                {store.postedComments.length === 0 ? (
+                  <p className="empty-state">Comments posted during this review appear here.</p>
+                ) : (
+                  <ul className="comment-list">
+                    {store.postedComments.map((comment, index) => {
+                      const item = asRecord(comment);
+                      const body =
+                        typeof comment === "string"
+                          ? comment
+                          : asText(item.body ?? item.text ?? item.content);
+                      const path = asText(item.path ?? item.file ?? item.filename);
+                      const line = asText(item.line);
+                      const url = safeCommentUrl(item.html_url ?? item.url);
+
+                      return (
+                        <li key={asText(item.id) || `comment-${index}`} className="comment">
+                          {path && (
+                            <div className="comment-location">
+                              {path}{line ? `:${line}` : ""}
+                            </div>
+                          )}
+                          <p>{body || "Comment posted."}</p>
+                          {url && (
+                            <a href={url} target="_blank" rel="noopener noreferrer">
+                              View comment ↗
+                            </a>
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </details>
+            </aside>
+            <div
+              className={`splitter-handle ${resizing === "left" ? "active" : ""}`}
+              onMouseDown={(e) => startResize("left", e)}
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Resize Voice Panel"
+              title="Drag to resize, pull left to collapse"
+            />
+          </>
+        )}
+
+        {/* Center Panel: Code & Diff Canvas */}
+        <section ref={diffPanelRef} className="panel diff-panel" aria-label="Code and diff canvas">
           {diffError && (
             <div className="diff-error error-message" role="alert">
               {diffError}
             </div>
           )}
-          <div className="diff-content" aria-busy={loadingDiff}>
-            <DiffViewer
-              files={diffFiles}
-              activeFile={store.activeFile}
-              onSelectFile={(file) => store.setActiveLocation(file, store.activeLine)}
-              activeLine={store.activeLine}
-              onSelectLine={(line) => store.setActiveLocation(store.activeFile, line)}
-              isLoading={loadingDiff}
-            />
+          <div className="diff-workspace" aria-busy={loadingDiff}>
+            {showExplorer && explorerFiles.length > 0 && (
+              <>
+                <div
+                  className="explorer-resizable-wrap"
+                  style={{ width: `${explorerWidth}px`, flexShrink: 0, height: "100%", display: "flex" }}
+                >
+                  <FileTreeExplorer
+                    files={explorerFiles}
+                    activeFile={store.activeFile}
+                    onSelectFile={(path) => void handleSelectFile(path)}
+                    rootName={explorerRootName}
+                    onClose={() => setShowExplorer(false)}
+                  />
+                </div>
+                <div
+                  className={`splitter-handle explorer-splitter ${resizing === "explorer" ? "active" : ""}`}
+                  onMouseDown={(e) => startResize("explorer", e)}
+                  role="separator"
+                  aria-orientation="vertical"
+                  aria-label="Resize File Explorer"
+                  title="Drag to resize, pull left to collapse"
+                />
+              </>
+            )}
+            <div className="diff-main-view">
+              {!showExplorer && explorerFiles.length > 0 && (
+                <div className="collapsed-explorer-bar">
+                  <button
+                    type="button"
+                    className="reopen-explorer-btn"
+                    onClick={() => {
+                      setShowExplorer(true);
+                      setExplorerWidth(lastExplorerWidth.current || 250);
+                    }}
+                    title="Open File Tree Explorer"
+                  >
+                    🌲 Explorer ({explorerFiles.length})
+                  </button>
+                </div>
+              )}
+              <div className="diff-content">
+                <DiffViewer
+                  files={displayedFiles}
+                  activeFile={store.activeFile}
+                  onSelectFile={handleSelectFile}
+                  activeLine={store.activeLine}
+                  onSelectLine={(line) => store.setActiveLocation(store.activeFile, line)}
+                  isLoading={loadingDiff}
+                />
+              </div>
+            </div>
           </div>
         </section>
 
-        <aside className="panel intelligence-panel" aria-label="Review intelligence">
-          <div className="tabs" role="tablist" aria-label="Review activity">
+        {/* Right Panel: Review Intelligence */}
+        {!showRightPanel ? (
+          <div className="collapsed-panel-strip right-strip">
             <button
               type="button"
-              id={transcriptTabId}
-              role="tab"
-              aria-selected={activeTab === "transcript"}
-              aria-controls={transcriptPanelId}
-              tabIndex={activeTab === "transcript" ? 0 : -1}
-              className={activeTab === "transcript" ? "selected" : ""}
-              onClick={() => setActiveTab("transcript")}
-              onKeyDown={(event) => {
-                if (["ArrowLeft", "ArrowRight", "End"].includes(event.key)) {
-                  event.preventDefault();
-                  setActiveTab("audit");
-                  document.getElementById(auditTabId)?.focus();
-                }
+              className="strip-btn"
+              onClick={() => {
+                setShowRightPanel(true);
+                setRightPanelWidth(lastRightWidth.current || 360);
               }}
+              title="Open Intelligence Panel"
+              aria-label="Open Intelligence Panel"
             >
-              Transcript <span className="count">{store.transcript.length}</span>
-            </button>
-            <button
-              type="button"
-              id={auditTabId}
-              role="tab"
-              aria-selected={activeTab === "audit"}
-              aria-controls={auditPanelId}
-              tabIndex={activeTab === "audit" ? 0 : -1}
-              className={activeTab === "audit" ? "selected" : ""}
-              onClick={() => setActiveTab("audit")}
-              onKeyDown={(event) => {
-                if (["ArrowLeft", "ArrowRight", "Home"].includes(event.key)) {
-                  event.preventDefault();
-                  setActiveTab("transcript");
-                  document.getElementById(transcriptTabId)?.focus();
-                }
-              }}
-            >
-              Audit Log <span className="count">{store.toolCalls.length}</span>
+              <span className="strip-icon" aria-hidden="true">🧠</span>
+              <span className="vertical-text">Intel</span>
             </button>
           </div>
+        ) : (
+          <>
+            <div
+              className={`splitter-handle ${resizing === "right" ? "active" : ""}`}
+              onMouseDown={(e) => startResize("right", e)}
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Resize Intelligence Panel"
+              title="Drag to resize, pull right to collapse"
+            />
+            <aside
+              className="panel intelligence-panel"
+              style={{ width: `${rightPanelWidth}px`, flexShrink: 0 }}
+              aria-label="Review intelligence"
+            >
+              <div className="intel-header-bar">
+                <div className="tabs" role="tablist" aria-label="Review activity">
+                  <button
+                    type="button"
+                    id={transcriptTabId}
+                    role="tab"
+                    aria-selected={activeTab === "transcript"}
+                    aria-controls={transcriptPanelId}
+                    tabIndex={activeTab === "transcript" ? 0 : -1}
+                    className={activeTab === "transcript" ? "selected" : ""}
+                    onClick={() => setActiveTab("transcript")}
+                    onKeyDown={(event) => {
+                      if (["ArrowLeft", "ArrowRight", "End"].includes(event.key)) {
+                        event.preventDefault();
+                        setActiveTab("audit");
+                        document.getElementById(auditTabId)?.focus();
+                      }
+                    }}
+                  >
+                    Transcript <span className="count">{store.transcript.length}</span>
+                  </button>
+                  <button
+                    type="button"
+                    id={auditTabId}
+                    role="tab"
+                    aria-selected={activeTab === "audit"}
+                    aria-controls={auditPanelId}
+                    tabIndex={activeTab === "audit" ? 0 : -1}
+                    className={activeTab === "audit" ? "selected" : ""}
+                    onClick={() => setActiveTab("audit")}
+                    onKeyDown={(event) => {
+                      if (["ArrowLeft", "ArrowRight", "Home"].includes(event.key)) {
+                        event.preventDefault();
+                        setActiveTab("transcript");
+                        document.getElementById(transcriptTabId)?.focus();
+                      }
+                    }}
+                  >
+                    Audit Log <span className="count">{store.toolCalls.length}</span>
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  className="close-panel-btn"
+                  onClick={() => setShowRightPanel(false)}
+                  title="Collapse Intelligence Panel"
+                  aria-label="Collapse Intelligence Panel"
+                >
+                  ▶
+                </button>
+              </div>
 
-          <div
-            id={transcriptPanelId}
-            ref={transcriptPanelRef}
-            role="tabpanel"
-            aria-labelledby={transcriptTabId}
-            hidden={activeTab !== "transcript"}
-            className="activity-scroll"
-            tabIndex={0}
-          >
-            <div className="transcript-list" role="log" aria-live="polite">
-              {store.transcript.length === 0 && (
-                <p className="empty-state">
-                  Start a voice session or send a message to begin your review.
-                </p>
-              )}
-              {store.transcript.map((msg, index) => (
-                <FixRecommendationCard
-                  key={asText(asRecord(msg).id) || `message-${index}`}
-                  text={msg.text}
-                  role={msg.role}
-                />
-              ))}
-              <div ref={transcriptEnd} />
-            </div>
-          </div>
+              <div
+                id={transcriptPanelId}
+                ref={transcriptPanelRef}
+                role="tabpanel"
+                aria-labelledby={transcriptTabId}
+                hidden={activeTab !== "transcript"}
+                className="activity-scroll"
+                tabIndex={0}
+              >
+                <div className="transcript-list" role="log" aria-live="polite">
+                  {store.transcript.length === 0 && (
+                    <p className="empty-state">
+                      Start a voice session or send a message to begin your review.
+                    </p>
+                  )}
+                  {store.transcript.map((msg, index) => (
+                    <FixRecommendationCard
+                      key={asText(asRecord(msg).id) || `message-${index}`}
+                      text={msg.text}
+                      role={msg.role}
+                    />
+                  ))}
+                  <div ref={transcriptEnd} />
+                </div>
+              </div>
 
-          <div
-            id={auditPanelId}
-            role="tabpanel"
-            aria-labelledby={auditTabId}
-            hidden={activeTab !== "audit"}
-            className="activity-scroll"
-            tabIndex={0}
-          >
-            {store.toolCalls.length === 0 ? (
-              <p className="empty-state">Tool activity will appear here as the review progresses.</p>
-            ) : (
-              <ol className="audit-list">
-                {store.toolCalls.map((call, index) => {
-                  const tool = asRecord(call);
-                  const status = asText(tool.status) || "pending";
-                  const statusClass =
-                    status === "success"
-                      ? "success"
-                      : status === "rejected" || status === "error"
-                        ? "rejected"
-                        : "pending";
+              <div
+                id={auditPanelId}
+                role="tabpanel"
+                aria-labelledby={auditTabId}
+                hidden={activeTab !== "audit"}
+                className="activity-scroll"
+                tabIndex={0}
+              >
+                {store.toolCalls.length === 0 ? (
+                  <p className="empty-state">Tool activity will appear here as the review progresses.</p>
+                ) : (
+                  <ol className="audit-list">
+                    {store.toolCalls.map((call, index) => {
+                      const tool = asRecord(call);
+                      const status = asText(tool.status) || "pending";
+                      const statusClass =
+                        status === "success"
+                          ? "success"
+                          : status === "rejected" || status === "error"
+                            ? "rejected"
+                            : "pending";
 
-                  return (
-                    <li key={asText(tool.id) || `tool-${index}`} className="audit-item">
-                      <div className="audit-item-header">
-                        <code>{toolName(tool)}</code>
-                        <span className={`badge tool-status ${statusClass}`}>{status}</span>
-                      </div>
-                      <span className="timestamp">
-                        {formatTimestamp(tool.timestamp ?? tool.createdAt ?? tool.startedAt)}
-                      </span>
-                      <pre aria-label="Tool arguments">
-                        {serialize(tool.args ?? tool.arguments ?? tool.input ?? {})}
-                      </pre>
-                    </li>
-                  );
-                })}
-              </ol>
-            )}
-          </div>
-        </aside>
+                      return (
+                        <li key={asText(tool.id) || `tool-${index}`} className="audit-item">
+                          <div className="audit-item-header">
+                            <code>{toolName(tool)}</code>
+                            <span className={`badge tool-status ${statusClass}`}>{status}</span>
+                          </div>
+                          <span className="timestamp">
+                            {formatTimestamp(tool.timestamp ?? tool.createdAt ?? tool.startedAt)}
+                          </span>
+                          <pre aria-label="Tool arguments">
+                            {serialize(tool.args ?? tool.arguments ?? tool.input ?? {})}
+                          </pre>
+                        </li>
+                      );
+                    })}
+                  </ol>
+                )}
+              </div>
+            </aside>
+          </>
+        )}
       </div>
 
       <style jsx>{`
@@ -673,6 +1238,101 @@ export default function DiffCanvasHUD() {
           white-space: nowrap;
         }
         .pr-badge { color: #67e8f9; background: #67e8f90d; }
+        .local-badge {
+          color: #a78bfa;
+          background: #a78bfa14;
+          border-color: #8b5cf633;
+        }
+        .github-repo-badge {
+          color: #38bdf8;
+          background: #38bdf814;
+          border-color: #0284c733;
+        }
+        .github-repo-toolbar {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+        .branch-form {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+        }
+        .branch-input {
+          width: 100px;
+          height: 34px;
+        }
+        .source-switcher {
+          display: flex;
+          background: #090b0f;
+          border: 1px solid #1e2633;
+          border-radius: 6px;
+          padding: 2px;
+          gap: 2px;
+        }
+        .source-btn {
+          border: none;
+          background: transparent;
+          color: #94a3b8;
+          font-size: 11px;
+          font-weight: 600;
+          padding: 5px 9px;
+          border-radius: 4px;
+          cursor: pointer;
+          transition: all 0.15s ease;
+        }
+        .source-btn:hover {
+          color: #f3f4f6;
+          background: #17212c;
+        }
+        .source-btn.active {
+          color: #34d399;
+          background: #34d39914;
+          font-weight: 700;
+        }
+        .source-btn.explorer-btn.active {
+          color: #67e8f9;
+          background: #67e8f914;
+          font-weight: 700;
+        }
+        .layout-toggles {
+          display: flex;
+          background: #090b0f;
+          border: 1px solid #1e2633;
+          border-radius: 6px;
+          padding: 2px;
+          gap: 2px;
+        }
+        .layout-toggle-btn {
+          border: 1px solid transparent;
+          background: transparent;
+          color: #94a3b8;
+          font-size: 11px;
+          font-weight: 600;
+          padding: 5px 9px;
+          border-radius: 4px;
+          cursor: pointer;
+          transition: all 0.15s ease;
+          display: flex;
+          align-items: center;
+          gap: 4px;
+        }
+        .layout-toggle-btn:hover {
+          color: #f3f4f6;
+          background: #17212c;
+        }
+        .layout-toggle-btn.active {
+          color: #38bdf8;
+          background: #38bdf814;
+          border-color: #0284c744;
+        }
+        .icon-btn {
+          border: none;
+          background: transparent;
+          padding: 4px 6px;
+          font-size: 12px;
+          cursor: pointer;
+        }
         .connection { color: #94a3b8; }
         .connected, .success { color: #34d399; }
         .connecting, .pending { color: #fbbf24; }
@@ -707,36 +1367,184 @@ export default function DiffCanvasHUD() {
         button.primary { color: #090b0f; background: #34d399; border-color: #34d399; font-weight: 700; }
         button.primary:hover:not(:disabled) { background: #6ee7b7; border-color: #6ee7b7; }
         .workspace {
-          display: grid;
-          grid-template-columns: 320px 1fr 380px;
-          gap: 16px;
+          display: flex;
+          flex-direction: row;
+          align-items: stretch;
+          gap: 0;
           height: calc(100vh - 64px);
-          padding: 16px;
+          padding: 8px 12px;
           background: #090b0f;
+          overflow: hidden;
+          position: relative;
+        }
+        .workspace.is-resizing {
+          user-select: none !important;
+          cursor: col-resize !important;
+        }
+        .splitter-handle {
+          width: 6px;
+          cursor: col-resize;
+          background: transparent;
+          position: relative;
+          z-index: 20;
+          flex-shrink: 0;
+          transition: background 0.15s ease, box-shadow 0.15s ease;
+          margin: 0 1px;
+          border-radius: 3px;
+        }
+        .splitter-handle:hover,
+        .splitter-handle.active {
+          background: #38bdf8;
+          box-shadow: 0 0 8px rgba(56, 189, 248, 0.6);
+        }
+        .collapsed-panel-strip {
+          width: 34px;
+          flex-shrink: 0;
+          background: #10141b;
+          border: 1px solid #1e2633;
+          border-radius: 8px;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          padding: 10px 0;
+          user-select: none;
+        }
+        .left-strip { margin-right: 4px; }
+        .right-strip { margin-left: 4px; }
+        .strip-btn {
+          border: none;
+          background: transparent;
+          color: #94a3b8;
+          cursor: pointer;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 8px;
+          padding: 6px 4px;
+          border-radius: 6px;
+          transition: all 0.15s ease;
+          width: 100%;
+        }
+        .strip-btn:hover {
+          color: #38bdf8;
+          background: #161b22;
+        }
+        .strip-icon {
+          font-size: 14px;
+        }
+        .vertical-text {
+          writing-mode: vertical-rl;
+          text-orientation: mixed;
+          transform: rotate(180deg);
+          font-size: 10px;
+          font-weight: 700;
+          letter-spacing: 1.2px;
+          text-transform: uppercase;
+        }
+        .panel-header-bar, .intel-header-bar {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          margin-bottom: 12px;
+        }
+        .panel-header-bar .eyebrow {
+          margin: 0;
+        }
+        .intel-header-bar {
+          margin-bottom: 0;
+          border-bottom: 1px solid #1e2633;
+          padding-right: 6px;
+        }
+        .intel-header-bar .tabs {
+          border-bottom: none;
+          flex: 1;
+        }
+        .close-panel-btn {
+          background: transparent;
+          border: 1px solid transparent;
+          color: #64748b;
+          padding: 2px 6px;
+          font-size: 10px;
+          border-radius: 4px;
+          cursor: pointer;
+          transition: all 0.15s ease;
+        }
+        .close-panel-btn:hover {
+          color: #f1f5f9;
+          border-color: #334155;
+          background: #1e2633;
+        }
+        .explorer-resizable-wrap {
+          height: 100%;
+          min-height: 0;
+          overflow: hidden;
         }
         .panel { min-width: 0; min-height: 0; background: #10141b; border: 1px solid #1e2633; border-radius: 8px; }
-        .controls-panel { padding: 20px; overflow-y: auto; }
-        .diff-panel, .intelligence-panel { display: flex; flex-direction: column; overflow: hidden; }
+        .controls-panel { padding: 16px; overflow-y: auto; }
+        .diff-panel { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
+        .intelligence-panel { display: flex; flex-direction: column; overflow: hidden; }
+        .diff-workspace {
+          display: flex;
+          flex-direction: row;
+          height: 100%;
+          min-height: 0;
+          min-width: 0;
+          overflow: hidden;
+          flex: 1;
+        }
+        .diff-main-view {
+          display: flex;
+          flex-direction: column;
+          flex: 1;
+          min-width: 0;
+          height: 100%;
+          position: relative;
+          overflow: hidden;
+        }
+        .collapsed-explorer-bar {
+          background: #10141b;
+          border-bottom: 1px solid #1e2633;
+          padding: 4px 8px;
+          display: flex;
+          align-items: center;
+        }
+        .reopen-explorer-btn {
+          font-size: 11px;
+          padding: 3px 8px;
+          border-radius: 4px;
+          background: #161b22;
+          border: 1px solid #1e2633;
+          color: #94a3b8;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          gap: 4px;
+        }
+        .reopen-explorer-btn:hover {
+          color: #67e8f9;
+          border-color: #67e8f9;
+          background: #67e8f914;
+        }
         .diff-content { flex: 1; min-height: 0; min-width: 0; overflow: auto; }
         .eyebrow { margin: 0 0 20px; color: #94a3b8; font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px; }
-        .orb-container { display: flex; flex-direction: column; align-items: center; padding: 8px 0 20px; text-align: center; }
-        .voice-status { margin: 18px 0 6px; font-weight: 600; }
+        .orb-container { display: flex; flex-direction: column; align-items: center; padding: 4px 0 16px; text-align: center; }
+        .voice-status { margin: 14px 0 6px; font-weight: 600; }
         .voice-status.speaking { color: #67e8f9; }
         .voice-status.listening { color: #34d399; }
         .muted, .timestamp { color: #94a3b8; }
         .hint { margin: 0; font-size: 12px; line-height: 1.6; }
         .send-hint { margin: -2px 0 0; font-size: 11px; color: #738196; }
-        .ptt-banner { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px; border: 1px solid #1e2633; border-radius: 6px; }
+        .ptt-banner { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px; border: 1px solid #1e2633; border-radius: 6px; }
         kbd { padding: 3px 5px; border: 1px solid #334155; border-bottom-width: 2px; border-radius: 4px; font-size: 10px; }
-        .shortcut-hint { margin: 8px 0 22px; }
-        .message-form { display: flex; flex-direction: column; gap: 10px; }
+        .shortcut-hint { margin: 6px 0 18px; }
+        .message-form { display: flex; flex-direction: column; gap: 8px; }
         .message-form label { font-weight: 600; }
-        textarea { width: 100%; min-height: 112px; padding: 12px; resize: vertical; line-height: 1.6; }
+        textarea { width: 100%; min-height: 100px; padding: 10px; resize: vertical; line-height: 1.6; }
         textarea::placeholder { color: #738196; }
         .notice { color: #fbbf24; background: #fbbf240d; padding: 12px; border-radius: 6px; line-height: 1.6; }
         .error-message { color: #fca5a5; font-size: 12px; line-height: 1.6; overflow-wrap: break-word; }
         .diff-error { padding: 12px 16px; background: #f871710d; border-bottom: 1px solid #1e2633; }
-        .comments-drawer { margin-top: 28px; border-top: 1px solid #1e2633; padding-top: 18px; }
+        .comments-drawer { margin-top: 20px; border-top: 1px solid #1e2633; padding-top: 14px; }
         summary { cursor: pointer; font-weight: 600; }
         summary .count { margin-left: 8px; }
         .count { color: #94a3b8; background: #1e2633; padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: 500; }
@@ -802,21 +1610,21 @@ export default function DiffCanvasHUD() {
         .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
         @media (max-width: 1400px) {
           .hud-header { flex-wrap: wrap; }
-          .workspace { height: calc(100vh - 112px); grid-template-columns: 280px minmax(0, 1fr) 320px; }
+          .workspace { height: calc(100vh - 112px); }
         }
         @media (max-width: 1050px) {
-          .workspace { height: auto; min-height: calc(100vh - 112px); grid-template-columns: 280px minmax(0, 1fr); }
-          .diff-panel { min-height: 620px; }
-          .intelligence-panel { grid-column: 1 / -1; height: 440px; }
+          .workspace { height: auto; min-height: calc(100vh - 112px); flex-wrap: wrap; }
+          .diff-panel { min-height: 620px; flex-basis: 100%; }
+          .intelligence-panel { width: 100% !important; height: 440px; }
           .header-controls { order: 3; width: 100%; justify-content: flex-start; }
         }
         @media (max-width: 680px) {
           .hud-header { padding: 12px; }
           .header-status { flex-wrap: wrap; }
-          .workspace { grid-template-columns: minmax(0, 1fr); padding: 12px; gap: 12px; }
-          .controls-panel { max-height: none; }
-          .diff-panel { height: 65vh; min-height: 400px; }
-          .intelligence-panel { grid-column: auto; height: 480px; }
+          .workspace { padding: 8px; gap: 8px; }
+          .controls-panel { max-height: none; width: 100% !important; }
+          .diff-panel { height: 65vh; min-height: 400px; flex-basis: 100%; }
+          .intelligence-panel { width: 100% !important; height: 480px; }
           .voice-select { width: 140px; }
         }
       `}</style>

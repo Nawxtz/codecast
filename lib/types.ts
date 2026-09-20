@@ -25,9 +25,23 @@ export type PostedComment = {
   timestamp: number;   // Unix ms
 };
 
+export type LocalProjectFile = {
+  path: string;
+  size?: number;
+  content?: string;
+  status?: "added" | "modified" | "unchanged" | "deleted" | "removed" | "renamed";
+  patch?: string;
+};
+
 export type CastState = {
   connection: "idle" | "connecting" | "open" | "reconnecting" | "error";
   sessionReady: boolean;
+  projectMode: "github_pr" | "github_repo" | "local_folder";
+  githubBranch: string;
+  localProjectName: string | null;
+  localFolderPath: string | null;
+  localFiles: LocalProjectFile[];
+  localViewMode: "changes" | "all_files";
   activePrNumber: number | null;
   activeFile: string | null;
   activeLine: number | null;
@@ -42,10 +56,11 @@ export type CastState = {
 
 export type PrDiffFile = {
   filename: string;
-  status: "added" | "modified" | "removed" | "renamed";
+  status: "added" | "modified" | "removed" | "renamed" | "unchanged";
   additions: number;
   deletions: number;
   patch: string;
+  content?: string;
 };
 
 export type PrDiffResult = {

@@ -202,3 +202,66 @@ export async function getFileContext(
 
   return result;
 }
+
+export interface RepoTreeItem {
+  path: string;
+  size?: number;
+  sha?: string;
+  type?: string;
+}
+
+export async function getRepoTree(
+  branch = "main",
+  targetOwner?: string,
+  targetRepo?: string,
+): Promise<{ owner: string; repo: string; branch: string; files: RepoTreeItem[] }> {
+  const { owner, repo } = resolveRepoTarget(targetOwner, targetRepo);
+  const octokit = getOctokit();
+
+  const { data } = await octokit.rest.git.getTree({
+    owner,
+    repo,
+    tree_sha: branch,
+    recursive: "1",
+  });
+
+  const BINARY_EXTS = new Set([
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".ico",
+    ".svg",
+    ".pdf",
+    ".zip",
+    ".tar",
+    ".gz",
+    ".woff",
+    ".woff2",
+    ".ttf",
+    ".eot",
+    ".mp3",
+    ".mp4",
+    ".db",
+    ".sqlite",
+  ]);
+
+  const files = (data.tree || [])
+    .filter((item) => {
+      if (item.type !== "blob" || !item.path) return false;
+      const lower = item.path.toLowerCase();
+      if (lower.startsWith("node_modules/") || lower.startsWith(".git/")) return false;
+      const ext = lower.slice(lower.lastIndexOf("."));
+      if (BINARY_EXTS.has(ext)) return false;
+      return true;
+    })
+    .map((item) => ({
+      path: item.path as string,
+      size: item.size,
+      sha: item.sha,
+      type: item.type,
+    }));
+
+  return { owner, repo, branch, files };
+}
+

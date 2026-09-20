@@ -11,6 +11,14 @@ import type {
 export type CastActions = {
   setConnection: (status: CastState["connection"]) => void;
   setSessionReady: (ready: boolean) => void;
+  setProjectMode: (mode: CastState["projectMode"]) => void;
+  setLocalProject: (
+    name: string | null,
+    path: string | null,
+    files: CastState["localFiles"],
+  ) => void;
+  setLocalViewMode: (mode: CastState["localViewMode"]) => void;
+  setGithubBranch: (branch: string) => void;
   setActivePr: (prNumber: number | null) => void;
   setActiveLocation: (file: string | null, line?: number | null) => void;
   setIsAssistantSpeaking: (speaking: boolean) => void;
@@ -31,6 +39,12 @@ export type CastStore = CastState & CastActions;
 const createInitialState = (): CastState => ({
   connection: "idle",
   sessionReady: false,
+  projectMode: "github_pr",
+  githubBranch: "main",
+  localProjectName: null,
+  localFolderPath: null,
+  localFiles: [],
+  localViewMode: "changes",
   activePrNumber: 1,
   activeFile: null,
   activeLine: null,
@@ -49,6 +63,19 @@ export const useCastStore = create<CastStore>()((set) => ({
   setConnection: (status) => set({ connection: status }),
 
   setSessionReady: (ready) => set({ sessionReady: ready }),
+
+  setProjectMode: (mode) => set({ projectMode: mode }),
+
+  setGithubBranch: (branch) => set({ githubBranch: branch }),
+
+  setLocalProject: (name, path, files) =>
+    set({
+      localProjectName: name,
+      localFolderPath: path,
+      localFiles: files,
+    }),
+
+  setLocalViewMode: (mode) => set({ localViewMode: mode }),
 
   setActivePr: (prNumber) => set({ activePrNumber: prNumber }),
 

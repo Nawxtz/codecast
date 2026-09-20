@@ -93,9 +93,8 @@ export default function DiffViewer({
   onSelectLine,
   isLoading = false,
 }: DiffViewerProps) {
-  const [localActiveFile, setLocalActiveFile] = useState<string | null>(
-    () => files[0]?.filename ?? null,
-  );
+  const [localActiveFile, setLocalActiveFile] = useState<string | null>(null);
+  const [filterQuery, setFilterQuery] = useState("");
 
   useEffect(() => {
     if (activeFile != null) {
@@ -122,10 +121,27 @@ export default function DiffViewer({
     );
   }, [files, activeFile, localActiveFile]);
 
-  const lines = useMemo(
-    () => parsePatch(selectedFile?.patch ?? ""),
-    [selectedFile?.patch],
-  );
+  const lines = useMemo(() => {
+    if (!selectedFile) return [];
+    if (selectedFile.content) {
+      return selectedFile.content.split("\n").map((text, i) => ({
+        oldLine: null,
+        newLine: i + 1,
+        type: "context" as const,
+        text,
+      }));
+    }
+    const parsed = parsePatch(selectedFile.patch ?? "");
+    if (parsed.length === 0 && selectedFile.patch) {
+      return selectedFile.patch.split("\n").map((text, i) => ({
+        oldLine: null,
+        newLine: i + 1,
+        type: "context" as const,
+        text,
+      }));
+    }
+    return parsed;
+  }, [selectedFile]);
 
   const stats = useMemo(() => {
     let additions = 0;
@@ -136,8 +152,17 @@ export default function DiffViewer({
       if (line.type === "delete") deletions += 1;
     }
 
-    return { additions, deletions };
-  }, [lines]);
+    return {
+      additions: selectedFile?.additions ?? additions,
+      deletions: selectedFile?.deletions ?? deletions,
+    };
+  }, [lines, selectedFile]);
+
+  const filteredFiles = useMemo(() => {
+    if (!filterQuery.trim()) return files;
+    const q = filterQuery.toLowerCase();
+    return files.filter((f) => f.filename.toLowerCase().includes(q));
+  }, [files, filterQuery]);
 
   function handleTabClick(filename: string) {
     setLocalActiveFile(filename);
@@ -257,28 +282,47 @@ export default function DiffViewer({
 
   return (
     <section className="diff-viewer" aria-label="Diff viewer" aria-busy={isLoading}>
-      <nav className="tabs" aria-label="Diff files">
-        {files.map((file) => {
-          const isSelected = selectedFile?.filename === file.filename;
+      <div className="tabs-header-bar">
+        {files.length > 3 && (
+          <div className="tab-filter-box">
+            <input
+              type="text"
+              className="tab-filter-input"
+              placeholder="Filter files…"
+              value={filterQuery}
+              onChange={(e) => setFilterQuery(e.target.value)}
+              aria-label="Filter files"
+            />
+          </div>
+        )}
+        <nav className="tabs" aria-label="Diff files">
+          {filteredFiles.map((file) => {
+            const isSelected = selectedFile?.filename === file.filename;
+            const hasStats = file.additions > 0 || file.deletions > 0;
 
-          return (
-            <button
-              key={file.filename}
-              type="button"
-              className={`tab ${isSelected ? "selected" : ""}`}
-              onClick={() => handleTabClick(file.filename)}
-              aria-pressed={isSelected}
-              title={file.filename}
-            >
-              <span className="filename">{basename(file.filename)}</span>
-              <span className="counts">
-                <span className="add">+{file.additions}</span>
-                <span className="del">-{file.deletions}</span>
-              </span>
-            </button>
-          );
-        })}
-      </nav>
+            return (
+              <button
+                key={file.filename}
+                type="button"
+                className={`tab ${isSelected ? "selected" : ""}`}
+                onClick={() => handleTabClick(file.filename)}
+                aria-pressed={isSelected}
+                title={file.filename}
+              >
+                <span className="filename">{basename(file.filename)}</span>
+                {hasStats ? (
+                  <span className="counts">
+                    <span className="add">+{file.additions}</span>
+                    <span className="del">-{file.deletions}</span>
+                  </span>
+                ) : (
+                  <span className="file-chip">file</span>
+                )}
+              </button>
+            );
+          })}
+        </nav>
+      </div>
 
       {selectedFile ? (
         <div className="canvas-wrapper">
@@ -369,12 +413,45 @@ export default function DiffViewer({
           font-family: Inter, ui-sans-serif, system-ui, sans-serif;
           min-height: 0;
         }
+        .tabs-header-bar {
+          display: flex;
+          align-items: center;
+          background: #090b0f;
+          border-bottom: 1px solid #1e2633;
+        }
+        .tab-filter-box {
+          padding: 6px 8px;
+          border-right: 1px solid #1e2633;
+          flex-shrink: 0;
+        }
+        .tab-filter-input {
+          height: 28px;
+          padding: 0 8px;
+          font-size: 11px;
+          color: #f3f4f6;
+          background: #10141b;
+          border: 1px solid #1e2633;
+          border-radius: 4px;
+          width: 120px;
+        }
+        .tab-filter-input:focus-visible {
+          outline: 2px solid #67e8f9;
+        }
         .tabs {
           display: flex;
           background: #090b0f;
-          border-bottom: 1px solid #1e2633;
           overflow-x: auto;
           scrollbar-width: thin;
+          flex: 1;
+        }
+        .file-chip {
+          font-size: 10px;
+          text-transform: uppercase;
+          color: #94a3b8;
+          padding: 1px 4px;
+          border-radius: 3px;
+          background: #161b22;
+          border: 1px solid #1e2633;
         }
         .tab {
           display: inline-flex;

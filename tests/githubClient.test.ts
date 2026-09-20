@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => {
   const getPull = vi.fn();
   const listFiles = vi.fn();
   const getContent = vi.fn();
+  const getTree = vi.fn();
   const paginate = vi.fn();
 
   const octokit = {
@@ -15,6 +16,9 @@ const mocks = vi.hoisted(() => {
       },
       repos: {
         getContent,
+      },
+      git: {
+        getTree,
       },
     },
     paginate,
@@ -30,6 +34,7 @@ const mocks = vi.hoisted(() => {
     getPull,
     listFiles,
     getContent,
+    getTree,
     paginate,
   };
 });
@@ -398,5 +403,29 @@ describe("getFileContext", () => {
         total_lines: 3,
       }),
     );
+  });
+
+  describe("getRepoTree", () => {
+    it("fetches repository tree recursively and filters out binary files", async () => {
+      mocks.getTree.mockResolvedValueOnce({
+        data: {
+          tree: [
+            { path: "src/index.ts", type: "blob", size: 120, sha: "sha1" },
+            { path: "assets/logo.png", type: "blob", size: 5000, sha: "sha2" },
+            { path: "node_modules/pkg/index.js", type: "blob", size: 200, sha: "sha3" },
+          ],
+        },
+      });
+
+      const res = await client.getRepoTree("main");
+      expect(mocks.getTree).toHaveBeenCalledWith({
+        owner: OWNER,
+        repo: REPO,
+        tree_sha: "main",
+        recursive: "1",
+      });
+      expect(res.files).toHaveLength(1);
+      expect(res.files[0].path).toBe("src/index.ts");
+    });
   });
 });

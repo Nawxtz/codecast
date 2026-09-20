@@ -64,6 +64,34 @@ const CODECAST_TOOLS = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "get_local_diff",
+      description: "Get the uncommitted git diff of the local project repository",
+      parameters: {
+        type: "object",
+        properties: {
+          path: { type: "string", description: "Optional local project path" },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "read_local_file",
+      description: "Read the content of a file in the local project repository",
+      parameters: {
+        type: "object",
+        properties: {
+          file: { type: "string", description: "Relative file path inside the project" },
+          project_path: { type: "string", description: "Optional local project root path" },
+        },
+        required: ["file"],
+      },
+    },
+  },
 ];
 
 function getLanguageInstruction(language: string): string {
@@ -87,6 +115,8 @@ function hasToolResults(messages: Array<{ role: string; content?: string | null;
         msg.tool_calls?.some(
           (tc) =>
             tc.function?.name === "get_pr_diff" ||
+            tc.function?.name === "get_local_diff" ||
+            tc.function?.name === "read_local_file" ||
             tc.function?.name === "submit_review",
         )),
   );

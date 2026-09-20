@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getPrDiff, getFileContext } from "@/lib/githubClient";
 import { safePostReviewComment, safeSubmitReview } from "@/lib/safeGithubExecutor";
+import { getLocalGitDiff, readLocalFileContent } from "@/lib/localProjectService";
 import type { ToolExecuteRequest, ToolExecuteResponse } from "@/lib/types";
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
@@ -96,6 +97,34 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
         return NextResponse.json(executorResult, {
           status: executorResult.status === "error" ? 500 : 200,
+        });
+      }
+
+      case "get_local_diff": {
+        const targetPath =
+          (typeof args.path === "string" && args.path) || process.cwd();
+        const files = await getLocalGitDiff(targetPath);
+        return NextResponse.json({
+          status: "success",
+          result: { files, path: targetPath },
+        });
+      }
+
+      case "read_local_file": {
+        const file = String(args.file ?? args.filename ?? args.path ?? "");
+        if (!file.trim()) {
+          return NextResponse.json(
+            { status: "error", reason: "Missing file parameter" },
+            { status: 400 },
+          );
+        }
+        const targetPath =
+          (typeof args.project_path === "string" && args.project_path) ||
+          process.cwd();
+        const content = await readLocalFileContent(targetPath, file);
+        return NextResponse.json({
+          status: "success",
+          result: { file, content },
         });
       }
 
